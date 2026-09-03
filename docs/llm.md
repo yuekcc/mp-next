@@ -43,30 +43,26 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 | `-m, --model MODEL` | 模型名。缺省取 `$LLM_MODEL` → `$SHELLM_MODEL` →（有 key 时）`gpt-5.5` → 报错 |
 | `-s, --system-prompt TEXT` | system prompt 文本（作为 messages[0] 前置插入） |
 | `--system-prompt-file F` | 从文件读 system prompt；文件不存在报错 |
-| `-t, --max-tokens N` | 最大输出 token；缺省走默认表（见下） |
+| `-t, --max-tokens N` | 最大输出 token；缺省 `16384` |
 | `-M, --messages JSON` | messages 数组 JSON，形如 `[{"role":"user","content":"hi"}]`；必须是数组否则报错 |
 | `--messages-file F` | 从文件读 messages 数组 JSON |
 | `--stream` | 开启流式（**默认**） |
 | `--no-stream` | 关闭流式 |
-| `--thinking [LEVEL]` | 推理强度 `low/medium/high/xhigh`，发为 `reasoning.effort`；参数可选（后面跟非 `-` 开头的词才当作 LEVEL） |
+| `--thinking [LEVEL]` | 打开推理。LEVEL 取 `low/medium/high/xhigh`；**只有后一个参数正好是这四个词之一时才被当作 LEVEL**，否则视为普通 prompt |
 | `--raw` | 非流式时直接打印原始响应 JSON（流式路径忽略） |
 | `-h, --help` | 打印帮助 |
 
 未知 `-` 开头参数直接报错退出。
 
-### 默认 max_tokens 表
+### max_tokens
 
-| 模型前缀 | 默认值 |
-|---|---|
-| `o1` / `o3` / `o4` | 100000 |
-| `gpt-5` | 128000 |
-| `gpt-4o` | 16384 |
-| `gpt-4-turbo` | 4096 |
-| `gpt-4` | 8192 |
-| `gpt-3.5` | 4096 |
-| 其他（未知模型） | 16384 |
+常量 `DEFAULT_MAX_TOKENS = 16384`。没有按模型名的内建默认值表。
 
-`LLM_MAX_TOKENS` / `-t` 非数字时打印 warning 并回退到默认表。
+`LLM_MAX_TOKENS` / `-t` 的值必须能解析成整数，否则打印 warning 并回退到 16384：
+
+```
+llm: warning: ignoring non-numeric max-tokens='abc', using 16384
+```
 
 ### tokens 字段名
 
@@ -75,13 +71,18 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 - `max_completion_tokens`：`o1` / `o3` / `o4` / `gpt-5` 前缀
 - `max_tokens`：其他
 
-### --thinking 生效条件
+### 推理（--thinking）
 
-仅当模型被识别为推理模型时才发送 `reasoning` 字段，否则打印 warning 忽略：
+无条件开关，不看模型名、不看环境变量：
 
-- `LLM_ASSUME_THINKING=1`（强制发）
-- `gpt-5` ~ `gpt-9` 前缀
-- `o1` ~ `o9` 前缀
+| 调用 | 请求体里的 `reasoning` |
+|---|---|
+| 不加 `--thinking` | 不发送该字段（默认关闭推理） |
+| `--thinking` | `{"summary":"auto"}` — 强度交给服务端默认 |
+| `--thinking high` | `{"effort":"high","summary":"auto"}` |
+
+LEVEL 只在恰好匹配 `low` / `medium` / `high` / `xhigh` 时才被消费，所以
+`llm --thinking "讲个笑话"` 不会把笑话当成强度（它仍是 prompt）。
 
 ---
 
@@ -102,7 +103,6 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 | `LLM_SPEED_TIME` | 持续低于限速的秒数，默认 60；`0` 关闭 |
 | `LLM_USAGE_FILE` | usage 记录写入路径；未设时写临时文件并在结束时删除 |
 | `LLM_USAGE_LEDGER` | usage 台账路径，默认 `$IDENTITY_DIR/usage/llm.jsonl`，无 `IDENTITY_DIR` 时 `$HOME/.headlong/usage/llm.jsonl` |
-| `LLM_ASSUME_THINKING` | `=1` 时对未列出的模型也发 `--thinking` |
 | `LLM_EXTRA_BODY` | JSON object，合并进请求体（同名键覆盖默认值） |
 | `LLM_PROVIDER` | 仅作标签写入 health / ledger，不影响行为 |
 | `LLM_RUN_ID` / `SHELLM_RUN_STEP_ID` | 写入 ledger 的 run_id |
@@ -200,3 +200,5 @@ llm --no-stream --raw -m gpt-4o "hi"
 - 无工具调用（function calling）、无多模态输入、无 attachments。
 - 不解析 `reasoning_content`，只取 `delta.content`；思考型模型需自行用 `LLM_EXTRA_BODY` 关思考。
 - 非 2xx 且无 `error.message` 时只报 `HTTP <code>`。
+- `max_tokens` / `max_completion_tokens` 的字段名仍按模型前缀切换（`o1`/`o3`/`o4`/`gpt-5`
+  → `max_completion_tokens`）。除此之外模型名不参与任何决策。

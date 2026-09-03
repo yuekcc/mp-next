@@ -26,13 +26,14 @@ const String USAGE =
 +++ "                           gpt-5.5 when OPENAI_API_KEY is set\n"
 +++ "  -s, --system-prompt TEXT System prompt text\n"
 +++ "  --system-prompt-file F   Read system prompt from file\n"
-+++ "  -t, --max-tokens N       Max output tokens. Default: model-specific cap\n"
++++ "  -t, --max-tokens N       Max output tokens. Default: 16384\n"
 +++ "  -M, --messages JSON      Messages array JSON, e.g. [{\"role\":\"user\",\"content\":\"hi\"}]\n"
 +++ "  --messages-file F        Read messages array JSON from file\n"
 +++ "  --stream                 Enable streaming (default)\n"
 +++ "  --no-stream              Disable streaming\n"
-+++ "  --thinking [LEVEL]       Reasoning effort for o-series / gpt-5+ models\n"
-+++ "                           (low/medium/high/xhigh; sent as reasoning.effort)\n"
++++ "  --thinking [LEVEL]       Enable reasoning (sent as reasoning.effort).\n"
++++ "                           LEVEL: low/medium/high/xhigh; omitted when not\n"
++++ "                           given, leaving the effort to the server default.\n"
 +++ "  --raw                    Print raw non-streaming API response JSON\n"
 +++ "  -h, --help               Show this help\n"
 +++ "\n"
@@ -55,8 +56,6 @@ const String USAGE =
 +++ "  LLM_MAX_TIME                  Hard ceiling on one HTTP attempt (default: 600; 0 off)\n"
 +++ "  LLM_SPEED_LIMIT               Abort a transfer slower than this many bytes/s...\n"
 +++ "  LLM_SPEED_TIME                ...for this many consecutive seconds (100/60; 0 off)\n"
-+++ "  LLM_USAGE_FILE                One-line JSON usage record written after the call\n"
-+++ "  LLM_ASSUME_THINKING=1         Send --thinking to unlisted models\n"
 +++ "  LLM_EXTRA_BODY                JSON object merged into the request body\n"
 +++ "                                (keys override defaults; e.g. llama-server:\n"
 +++ "                                '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
@@ -72,6 +71,9 @@ const String USAGE =
 +++ "  echo \"summarize this\" | llm -m gpt-4o\n"
 +++ "  LLM_API_URL=http://localhost:11434/v1/chat/completions \\\n"
 +++ "    llm -m qwen3:8b \"explain quicksort\"\n";
+
+// 未在命令行/环境里显式指定时的输出 token 上限。
+const int DEFAULT_MAX_TOKENS = 16384;
 
 // ===========================================================================
 // 全局配置（CLI 进程，一次赋值即可）
@@ -431,32 +433,12 @@ fn String jescape(String s)
 // payload 构建（OpenAI chat-completions）
 // ===========================================================================
 
-fn bool supports_reasoning()
-{
-	if (env_str("LLM_ASSUME_THINKING") == "1") { return true; }
-	if (pfx(g_model, "gpt-") && g_model.len >= 5 && g_model[4] >= '5' && g_model[4] <= '9') { return true; }
-	if (pfx(g_model, "o") && g_model.len >= 2 && g_model[1] >= '1' && g_model[1] <= '9') { return true; }
-	return false;
-}
-
 fn String tokens_field()
 {
 	if (pfx(g_model, "o1") || pfx(g_model, "o3") || pfx(g_model, "o4") || pfx(g_model, "gpt-5")) {
 		return "max_completion_tokens";
 	}
 	return "max_tokens";
-}
-
-fn String default_max_tokens()
-{
-	if (pfx(g_model, "o1") || pfx(g_model, "o3") || pfx(g_model, "o4")) { return "100000"; }
-	if (pfx(g_model, "gpt-5")) { return "128000"; }
-	if (pfx(g_model, "gpt-4o")) { return "16384"; }
-	if (pfx(g_model, "gpt-4-turbo")) { return "4096"; }
-	if (pfx(g_model, "gpt-4")) { return "8192"; }
-	if (pfx(g_model, "gpt-3.5")) { return "4096"; }
-	// 未知模型走保守大值（openai-compatible 场景为主）
-	return "16384";
 }
 
 // 返回 tmem 视图，调用方立即使用
@@ -492,15 +474,15 @@ fn String build_payload()
 		(void)cjson::add_item_to_object(so, "include_usage", cjson::create_true());
 		(void)cjson::add_item_to_object(payload, "stream_options", so);
 	}
-	if (g_thinking && g_thinking_level.len > 0) {
-		if (supports_reasoning()) {
-			CJsonItem* r = cjson::create_object();
+	// --thinking 是无条件开关：传了就发 reasoning，不看模型名。
+	// 给了 LEVEL 才写 effort，否则交给服务端默认。
+	if (g_thinking) {
+		CJsonItem* r = cjson::create_object();
+		if (g_thinking_level.len > 0) {
 			(void)cjson::add_item_to_object(r, "effort", cjson::create_string(zof(g_thinking_level)));
-			(void)cjson::add_item_to_object(r, "summary", cjson::create_string(zof("auto")));
-			(void)cjson::add_item_to_object(payload, "reasoning", r);
-		} else {
-			io::eprintfn("llm: --thinking ignored: %s not in the known-reasoning model list (LLM_ASSUME_THINKING=1 to send anyway)", g_model);
 		}
+		(void)cjson::add_item_to_object(r, "summary", cjson::create_string(zof("auto")));
+		(void)cjson::add_item_to_object(payload, "reasoning", r);
 	}
 	// LLM_EXTRA_BODY：JSON object 合并进请求体，同名键覆盖默认值（如
 	// llama-server 的 chat_template_kwargs）
@@ -962,6 +944,11 @@ fn void append_prompt(String part)
 	}
 }
 
+fn bool is_thinking_level(String s)
+{
+	return s == "low" || s == "medium" || s == "high" || s == "xhigh";
+}
+
 fn int main(String[] args)
 {
 	// 1) .env 分层加载：cwd 先行，状态目录补缺；真实环境始终优先。
@@ -1022,7 +1009,8 @@ fn int main(String[] args)
 			g_raw = true;
 		} else if (a == "--thinking") {
 			g_thinking = true;
-			if (i + 1 < args.len && !args[i + 1].starts_with("-")) {
+			// 只吞下合法的 LEVEL，否则 --thinking "问题" 会把问题吃掉当强度。
+			if (i + 1 < args.len && is_thinking_level(args[i + 1])) {
 				g_thinking_level = args[i + 1];
 				i++;
 			}
@@ -1053,16 +1041,16 @@ fn int main(String[] args)
 		}
 	}
 
-	// 6) max tokens 校验与默认表
+	// 6) max tokens：仅接受显式数值，非数字/未提供一律用固定默认值
 	int mt;
-	if (!parse_int(g_max_tokens, &mt)) {
+	if (parse_int(g_max_tokens, &mt)) {
+		g_max_tokens_n = mt;
+	} else {
 		if (g_max_tokens.len > 0) {
-			warn_msg(string::tformat("ignoring non-numeric LLM_MAX_TOKENS='%s'", g_max_tokens));
+			warn_msg(string::tformat("ignoring non-numeric max-tokens='%s', using %d", g_max_tokens, DEFAULT_MAX_TOKENS));
 		}
-		g_max_tokens = default_max_tokens();
-		if (!parse_int(g_max_tokens, &mt)) { mt = 16384; }
+		g_max_tokens_n = DEFAULT_MAX_TOKENS;
 	}
-	g_max_tokens_n = mt;
 
 	// 7) endpoint
 	String url = env_str("LLM_API_URL");
