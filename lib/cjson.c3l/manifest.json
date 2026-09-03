@@ -1,0 +1,17 @@
+{
+  "provides": "cjson",
+  "targets": {
+    "windows-x64": {
+      "linked-libraries": ["cjson"]
+    },
+    "linux-x64": {
+      "c-sources": ["./src/cJSON.c"]
+    },
+    "macos-x64": {
+      "c-sources": ["./src/cJSON.c"]
+    },
+    "macos-aarch64": {
+      "c-sources": ["./src/cJSON.c"]
+    }
+  }
+}
