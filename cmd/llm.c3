@@ -145,12 +145,10 @@ fn bool env_has(String name)
 
 fn String now_iso_utc()
 {
-	// copy 补尾部 NUL（cjson .set 需要 NUL 结尾的 String）
 	DateTime dt = datetime::now();
-	String s = string::tformat("%04d-%02d-%02dT%02d:%02d:%02dZ",
+	return string::tformat("%04d-%02d-%02dT%02d:%02d:%02dZ",
 		(int)dt.year, (int)dt.month + 1, (int)dt.day,
 		(int)dt.hour, (int)dt.min, (int)dt.sec);
-	return s.copy(tmem);
 }
 
 fn uint current_pid()
@@ -243,14 +241,14 @@ fn String read_stdin_all()
 	return buf.str_view();
 }
 
-// C 字符串 → C3 String（copy 补尾部 NUL，可安全交给 cjson .set 等 C 侧）
+// C 字符串 → C3 String（len 精确视图；写 cjson 由 wrapper 统一补 NUL）
 fn String zcopy(char* c)
 {
 	if (!c) { return ""; }
 	usz n = libc::strlen((ZString)c);
 	DString d = dstring::new(tmem);
 	for (usz i = 0; i < n; i++) { d.append_char(c[i]); }
-	return d.str_view().copy(tmem);
+	return d.str_view();
 }
 
 // ===========================================================================
@@ -502,7 +500,7 @@ fn void ledger_append()
 	String identity = env_str("IDENTITY_NAME");
 	if (identity.len == 0) {
 		String idir = env_str("IDENTITY_DIR");
-		if (idir.len > 0) { identity = basename(idir).copy(tmem); }
+		if (idir.len > 0) { identity = basename(idir); }
 	}
 	if (identity.len > 0) { entry.set("identity", identity); }
 	String run_id = env_str("LLM_RUN_ID");
