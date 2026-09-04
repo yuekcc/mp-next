@@ -57,16 +57,16 @@ macro CJsonItem* CJsonItem.set(&self, String key, value)
 {
 	$switch:
 		$case $Typeof(value) == String:
-			return add_string_to_object(self, (ZString)key, (ZString)value);
+			return add_string_to_object(self, key.zstr_tcopy(), value.zstr_tcopy());
 		$case types::is_int($Typeof(value)):
-			return add_number_to_object(self, (ZString)key, (double)value);
+			return add_number_to_object(self, key.zstr_tcopy(), (double)value);
 		$case $Typeof(value) == bool:
-			return add_bool_to_object(self, (ZString)key, value);
+			return add_bool_to_object(self, key.zstr_tcopy(), value);
 		$case types::is_float($Typeof(value)):
-			return add_number_to_object(self, (ZString)key, value);
+			return add_number_to_object(self, key.zstr_tcopy(), value);
 		$case $Typeof(value) == CJsonItem*:
 		{
-			add_item_to_object(self, (ZString)key, value);
+			add_item_to_object(self, key.zstr_tcopy(), value);
 			return value;
 		}
 		$default:
@@ -76,7 +76,7 @@ macro CJsonItem* CJsonItem.set(&self, String key, value)
 
 fn CJsonItem* CJsonItem.set_item(&self, String key, CJsonItem* value) @inline
 {
-	add_item_to_object(self, (ZString)key, value);
+	add_item_to_object(self, key.zstr_tcopy(), value);
 	return value;
 }
 
@@ -85,7 +85,7 @@ macro CJsonItem* CJsonItem.set_at(&self, sz index, value)
 	$switch:
 		$case $Typeof(value) == String:
 		{
-			CJsonItem* item = create_string((ZString)value);
+			CJsonItem* item = create_string(value.zstr_tcopy());
 			return insert_item_in_array(self, (int)index, item) ? item : null;
 		}
 		$case types::is_int($Typeof(value)):
@@ -115,7 +115,7 @@ macro CJsonItem* CJsonItem.push_back(&self, value)
 	$switch:
 		$case $Typeof(value) == String:
 		{
-			CJsonItem* item = create_string((ZString)value);
+			CJsonItem* item = create_string(value.zstr_tcopy());
 			return add_item_to_array(self, item) ? item : null;
 		}
 		$case types::is_int($Typeof(value)):
@@ -142,10 +142,10 @@ macro CJsonItem* CJsonItem.push_back(&self, value)
 
 // --- child access -----------------------------------------------------------
 
-fn CJsonItem* CJsonItem.get_key(&self, String key) @inline => get_object_item(self, (ZString)key);
+fn CJsonItem* CJsonItem.get_key(&self, String key) @inline => get_object_item(self, key.zstr_tcopy());
 fn CJsonItem* CJsonItem.get_at(&self, sz index) @inline => get_array_item(self, (int)index);
-fn bool CJsonItem.has_key(&self, String key) @inline => has_object_item(self, (ZString)key);
-fn bool CJsonItem.contains(&self, String key) @inline => has_object_item(self, (ZString)key);
+fn bool CJsonItem.has_key(&self, String key) @inline => has_object_item(self, key.zstr_tcopy());
+fn bool CJsonItem.contains(&self, String key) @inline => has_object_item(self, key.zstr_tcopy());
 
 macro void CJsonItem.@each_entry(&self; @body(String key, CJsonItem* value))
 {
@@ -222,7 +222,7 @@ fn bool? CJsonItem.get_bool(&self)
 
 // --- deletion ---------------------------------------------------------------
 
-	fn void CJsonItem.delete_key(&self, String key) @inline => delete_item_from_object(self, (ZString)key);
+	fn void CJsonItem.delete_key(&self, String key) @inline => delete_item_from_object(self, key.zstr_tcopy());
 	fn void CJsonItem.delete_at(&self, sz index) @inline => delete_item_from_array(self, (int)index);
 
 // --- length -----------------------------------------------------------------
