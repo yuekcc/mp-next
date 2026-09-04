@@ -241,16 +241,6 @@ fn String read_stdin_all()
 	return buf.str_view();
 }
 
-// C 字符串 → C3 String（len 精确视图；写 cjson 由 wrapper 统一补 NUL）
-fn String zcopy(char* c)
-{
-	if (!c) { return ""; }
-	usz n = libc::strlen((ZString)c);
-	DString d = dstring::new(tmem);
-	for (usz i = 0; i < n; i++) { d.append_char(c[i]); }
-	return d.str_view();
-}
-
 // ===========================================================================
 // .env 分层加载（简化版：KEY=VALUE / export KEY=VALUE，值可带引号）
 // 真实环境始终优先于文件。
@@ -425,8 +415,8 @@ fn String http_attempt(String url, String payload, int* http_code)
 	curl::slist_free_all(hdrs);
 
 	if (res != curl::CurlResult.OK) {
-		String detail = zcopy(&g_errbuf[0]);
-		if (detail.len == 0) { detail = zcopy(curl::easy_strerror(res)); }
+		String detail = ((ZString)&g_errbuf[0]).str_view();
+		if (detail.len == 0) { detail = ((ZString)curl::easy_strerror(res)).str_view(); }
 		return string::tformat("curl error: %s", detail);
 	}
 	return "";
@@ -494,7 +484,7 @@ fn void ledger_append()
 	entry.set("model", g_model);
 	for (CJsonItem* m = rec.child; m != null; m = m.next) {
 		if (m.string != null && cjson::is_number(m)) {
-			entry.set(zcopy(m.string), (int)m.valuedouble);
+			entry.set(((ZString)m.string).str_view(), (int)m.valuedouble);
 		}
 	}
 	String identity = env_str("IDENTITY_NAME");
