@@ -90,10 +90,12 @@ struct ChatResponse
 // 流式单帧（SSE "data:" 后的 JSON）
 struct ChatStreamChunk
 {
-	String delta_content; // choices[0].delta.content（字符串值，缺省为空）
+	String delta_content;    // choices[0].delta.content（字符串值，缺省为空）
+	String delta_reasoning;  // choices[0].delta.reasoning（标准字段，字符串）；
+	                         // DeepSeek 私有扩展 reasoning_content 作兼容回退
 	String finish_reason;
 	Usage usage;
-	bool has_usage;       // 本帧带 usage（OpenAI 在终止帧/独立 chunk 下发）
+	bool has_usage;          // 本帧带 usage（OpenAI 在终止帧/独立 chunk 下发）
 }
 
 // ===========================================================================
@@ -406,6 +408,7 @@ fn ChatStreamChunk? parse_stream_chunk(Allocator allocator, String json)
 
 	ChatStreamChunk c;
 	c.delta_content = "";
+	c.delta_reasoning = "";
 	c.finish_reason = "";
 	c.usage.prompt_tokens = -1;
 	c.usage.completion_tokens = -1;
@@ -434,6 +437,12 @@ fn ChatStreamChunk? parse_stream_chunk(Allocator allocator, String json)
 							if (cv.is_string()) {
 								c.delta_content = cv.get_string(allocator);
 							}
+						}
+						// 标准字段 delta.reasoning（字符串）优先；DeepSeek 私有
+						// 扩展 delta.reasoning_content 作兼容回退（与 mini_pi 一致）。
+						c.delta_reasoning = d.get_key_string("reasoning", allocator) ?? "";
+						if (c.delta_reasoning.len == 0) {
+							c.delta_reasoning = d.get_key_string("reasoning_content", allocator) ?? "";
 						}
 					}
 				}

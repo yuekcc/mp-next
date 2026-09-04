@@ -33,6 +33,9 @@ const String USAGE =
 +++ "  --thinking [LEVEL]       Enable reasoning (sent as reasoning.effort).\n"
 +++ "                           LEVEL: low/medium/high/xhigh; omitted when not\n"
 +++ "                           given, leaving the effort to the server default.\n"
++++ "  --debug                  Debug: print request body, then stream reasoning\n"
++++ "                           as it arrives — both to stderr, so stdout keeps\n"
++++ "                           only the assistant's answer\n"
 +++ "  -h, --help               Show this help\n"
 +++ "\n"
 +++ "Wire format:\n"
@@ -84,6 +87,7 @@ String g_prompt = "";
 String g_max_tokens = "";
 int g_max_tokens_n = 0;
 bool g_thinking = false;
+bool g_debug = false;
 String g_thinking_level = "";
 int g_retries = 2;
 int g_backoff = 1;
@@ -353,6 +357,8 @@ fn String build_payload()
 
 	String s = model::json_to_string(payload, tmem);
 	cjson::delete(payload);
+
+	if (g_debug) { io::eprintfn("---\n%s\n---", s); }
 	return s;
 }
 
@@ -510,7 +516,9 @@ fn void ledger_append()
 
 fn void warn_truncated()
 {
-	io::eprintfn("llm: warning: output truncated at max_tokens=%s (reasoning tokens count against it) — raise with -t", g_max_tokens);
+	// 用解析后的数值 g_max_tokens_n：未显式给 -t 时 g_max_tokens 是空串，
+	// 会打印出 max_tokens= 这样的空值。
+	io::eprintfn("llm: warning: output truncated at max_tokens=%d (reasoning tokens count against it) — raise with -t", g_max_tokens_n);
 }
 
 // ===========================================================================
@@ -557,6 +565,12 @@ fn void handle_sse_line(String line)
 		io::print(chunk.delta_content);
 		File* so = io::stdout();
 		(void)so.flush();
+	}
+	if (g_debug && chunk.delta_reasoning.len > 0) {
+		// debug：reasoning 走 stderr，stdout 仍只含最终答案
+		io::eprint(chunk.delta_reasoning);
+		File* se = io::stderr();
+		(void)se.flush();
 	}
 	if (chunk.finish_reason == "length") { warn_truncated(); }
 	if (chunk.has_usage) {
@@ -704,6 +718,8 @@ fn int main(String[] args)
 				g_thinking_level = args[i + 1];
 				i++;
 			}
+		} else if (a == "--debug") {
+			g_debug = true;
 		} else if (a.starts_with("-")) {
 			die(string::tformat("Unknown option: %s (try llm --help)", a));
 		} else {
