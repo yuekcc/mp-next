@@ -20,6 +20,10 @@ c3c build llm          # 单个目标
 产物输出到 `build/`（`project.json` 的 `output` 字段）。依赖 `lib/curl.c3l`（libcurl 绑定）
 和 `lib/cjson.c3l`（cJSON 绑定）。
 
+chat-completions 的请求体/响应体结构体与 JSON 编解码集中在 `src/model/model.c3`
+（`module model`），`cmd/llm.c3` 只负责组装 `ChatRequest` 结构体、按字段消费
+`ChatResponse`/`ChatStreamChunk` 的解析结果，不做字符串拼 JSON。
+
 ---
 
 ## 用法
@@ -46,13 +50,13 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 | `-t, --max-tokens N` | 最大输出 token；缺省 `16384` |
 | `-M, --messages JSON` | messages 数组 JSON，形如 `[{"role":"user","content":"hi"}]`；必须是数组否则报错 |
 | `--messages-file F` | 从文件读 messages 数组 JSON |
-| `--stream` | 开启流式（**默认**） |
-| `--no-stream` | 关闭流式 |
 | `--thinking [LEVEL]` | 打开推理。LEVEL 取 `low/medium/high/xhigh`；**只有后一个参数正好是这四个词之一时才被当作 LEVEL**，否则视为普通 prompt |
-| `--raw` | 非流式时直接打印原始响应 JSON（流式路径忽略） |
 | `-h, --help` | 打印帮助 |
 
 未知 `-` 开头参数直接报错退出。
+
+**恒为流式**：请求总是 `stream:true`，响应按 SSE 打字机输出，没有 `--stream` /
+`--no-stream` / `--raw` 之类的开关。
 
 ### max_tokens
 
@@ -104,7 +108,7 @@ LEVEL 只在恰好匹配 `low` / `medium` / `high` / `xhigh` 时才被消费，�
 | `LLM_USAGE_FILE` | usage 记录写入路径；未设时写临时文件并在结束时删除 |
 | `LLM_USAGE_LEDGER` | usage 台账路径，默认 `$IDENTITY_DIR/usage/llm.jsonl`，无 `IDENTITY_DIR` 时 `$HOME/.headlong/usage/llm.jsonl` |
 | `LLM_EXTRA_BODY` | JSON object，合并进请求体（同名键覆盖默认值） |
-| `LLM_PROVIDER` | 仅作标签写入 health / ledger，不影响行为 |
+| `LLM_PROVIDER` | 仅作标签写入 ledger，不影响行为 |
 | `LLM_RUN_ID` / `SHELLM_RUN_STEP_ID` | 写入 ledger 的 run_id |
 | `IDENTITY_DIR` / `IDENTITY_NAME` | 写 ledger 的 identity；`IDENTITY_NAME` 缺省取 `IDENTITY_DIR` 的 basename |
 | `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong` |
@@ -136,33 +140,23 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' \
 
 ## 输出与副作用
 
-**流式（默认）**：只打印 `choices.0.delta.content` 增量，边收边 flush。
-
-**非流式**：默认打印 `choices.0.message.content`；`--raw` 打印完整响应 JSON。
+**正文（恒为流式）**：只打印 `choices.0.delta.content` 增量，边收边 flush（打字机效果）。
+没有非流式路径，无法拿到原始整段响应 JSON。
 
 **usage 文件**（`LLM_USAGE_FILE`）：调用结束后写入单行 JSON，如
 `{"in_tok":12,"out_tok":48,"think_tok":0}`；未返回的字段省略。
 
 **usage 台账**：每次成功调用追加一行 JSONL（ts / provider / model / usage 字段 / identity / run_id）。
 
-**health marker**：每次调用后重写 `$HOME/.headlong/run/llm_health.json`：
-
-```json
-{"ok":true,"ts":"2026-09-03T14:22:31Z","provider":"chat-completions","model":"gpt-5.5"}
-```
-
-失败时追加 `kind`（`credit` / `auth` / `rate` / `other`）、`http_code`、`message`。
-
 ---
 
 ## 重试与错误处理
 
-| 路径 | 重试条件 |
+| 触发 | 行为 |
 |---|---|
-| 流式 | curl 错误，或**一个 data 事件都没发出**（含空响应、HTTP 错误体、内嵌 error） |
-| 非流式 | curl 错误、`HTTP 408`、`HTTP 429`、`5xx`，以及 2xx 响应内嵌的 error（`error.message` / `finish_reason="error"` / 空白 body） |
-
-一旦流式已输出任何内容，失败直接终止，不再重试。
+| curl 错误 | 若还没发出任何内容，按退避重试 |
+| 一个 `data:` 事件都没发出 | 视为失败可重试：空响应、HTTP 错误体、内嵌 error 都会先从缓冲里解析 `error.message` |
+| 已输出任何内容后失败 | 直接终止，**不再重试** |
 
 `finish_reason == "length"` 时打印截断 warning（推理 token 也计入 `max_tokens`，需 `-t` 上调）。
 
@@ -187,15 +181,13 @@ LLM_API_URL=https://openrouter.ai/api/v1/chat/completions \
 
 # 完整 messages 数组
 llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]'
-
-# 只拿原始 JSON
-llm --no-stream --raw -m gpt-4o "hi"
 ```
 
 ---
 
 ## 已知限制
 
+- 恒为流式：请求总是 `stream:true`，SSE 打字机输出；端点必须支持 chat-completions 流式。
 - 只有 chat-completions 一条 wire 路径；无 Anthropic / Gemini / adapter / OpenRouter 路由。
 - 无工具调用（function calling）、无多模态输入、无 attachments。
 - 不解析 `reasoning_content`，只取 `delta.content`；思考型模型需自行用 `LLM_EXTRA_BODY` 关思考。

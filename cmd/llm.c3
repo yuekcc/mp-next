@@ -1,12 +1,13 @@
 // llm — 极简 LLM CLI（C3 版，复刻 headlong/bin/llm）
 // 仅支持 chat-completions 接口（OpenAI wire format：OpenAI / OpenRouter /
-// openai-compatible 共用同一条 wire 路径）。HTTP 走项目内 libcurl 绑定，
-// JSON 走 cjson；流式解析 SSE，非流式按 http_code 处理。
+// openai-compatible 共用同一条 wire 路径）。HTTP 走项目内 libcurl 绑定；
+// 请求体/响应体的结构体定义与 JSON 编解码集中在 src/model/model.c3（本文件只
+// 负责组装结构体、按字段消费解析结果）。恒为流式请求，SSE 边收边打印（打字机效果）。
 module llm_cli;
 
 import std::io, std::io::file, std::io::path, std::os, std::os::env,
        std::collections::list, std::core::string, std::time::datetime,
-       std::thread, libc, curl, cjson;
+       std::thread, libc, curl, cjson, model;
 
 // Windows 当前进程 PID / TTY 探测
 extern fn uint win_current_pid() @cname("GetCurrentProcessId") @feat(WIN32);
@@ -29,12 +30,9 @@ const String USAGE =
 +++ "  -t, --max-tokens N       Max output tokens. Default: 16384\n"
 +++ "  -M, --messages JSON      Messages array JSON, e.g. [{\"role\":\"user\",\"content\":\"hi\"}]\n"
 +++ "  --messages-file F        Read messages array JSON from file\n"
-+++ "  --stream                 Enable streaming (default)\n"
-+++ "  --no-stream              Disable streaming\n"
 +++ "  --thinking [LEVEL]       Enable reasoning (sent as reasoning.effort).\n"
 +++ "                           LEVEL: low/medium/high/xhigh; omitted when not\n"
 +++ "                           given, leaving the effort to the server default.\n"
-+++ "  --raw                    Print raw non-streaming API response JSON\n"
 +++ "  -h, --help               Show this help\n"
 +++ "\n"
 +++ "Wire format:\n"
@@ -59,7 +57,7 @@ const String USAGE =
 +++ "  LLM_EXTRA_BODY                JSON object merged into the request body\n"
 +++ "                                (keys override defaults; e.g. llama-server:\n"
 +++ "                                '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
-+++ "  LLM_PROVIDER                  Label only (health/ledger records); no behavior\n"
++++ "  LLM_PROVIDER                  Label only (ledger records); no behavior\n"
 +++ "\n"
 +++ ".env:\n"
 +++ "  Loaded layered: ./.env first, then $HEADLONG_HOME|$SHELLM_HOME|~/.headlong/.env.\n"
@@ -85,8 +83,6 @@ String g_messages = "";
 String g_prompt = "";
 String g_max_tokens = "";
 int g_max_tokens_n = 0;
-bool g_stream = true;
-bool g_raw = false;
 bool g_thinking = false;
 String g_thinking_level = "";
 int g_retries = 2;
@@ -114,7 +110,6 @@ struct StreamState
 }
 
 StreamState g_ss;
-DString g_resp;
 char[256] g_errbuf @noinit;
 
 // ===========================================================================
@@ -132,40 +127,8 @@ fn void warn_msg(String s)
 	io::eprintfn("llm: warning: %s", s);
 }
 
-fn bool pfx(String s, String p) => s.starts_with(p);
-
-fn String str_trim(String s)
-{
-	usz start = 0;
-	usz end = s.len;
-	while (start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' || s[start] == '\n')) start++;
-	while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) end--;
-	return s[start : end - start];
-}
-
-fn String trim_cr(String s)
-{
-	if (s.len > 0 && s[s.len - 1] == '\r') { return s[0 : s.len - 1]; }
-	return s;
-}
-
-fn bool parse_int(String s, int* out)
-{
-	String t = str_trim(s);
-	if (t.len == 0) { return false; }
-	int v = 0;
-	usz i = 0;
-	bool neg = false;
-	if (t[0] == '-') { neg = true; i = 1; }
-	if (i >= t.len) { return false; }
-	for (; i < t.len; i++) {
-		char c = t[i];
-		if (c < '0' || c > '9') { return false; }
-		v = v * 10 + (c - '0');
-	}
-	*out = neg ? -v : v;
-	return true;
-}
+// 注：trim / trim_right / to_int / starts_with / zstr_tcopy 等均直接用 std 库
+// （std::core::string），不再手写等价函数。
 
 fn String env_str(String name)
 {
@@ -182,10 +145,12 @@ fn bool env_has(String name)
 
 fn String now_iso_utc()
 {
+	// copy 补尾部 NUL（cjson .set 需要 NUL 结尾的 String）
 	DateTime dt = datetime::now();
-	return string::tformat("%04d-%02d-%02dT%02d:%02d:%02dZ",
+	String s = string::tformat("%04d-%02d-%02dT%02d:%02d:%02dZ",
 		(int)dt.year, (int)dt.month + 1, (int)dt.day,
 		(int)dt.hour, (int)dt.min, (int)dt.sec);
+	return s.copy(tmem);
 }
 
 fn uint current_pid()
@@ -264,14 +229,6 @@ fn String basename(String p)
 	return p[i : p.len - i];
 }
 
-fn bool is_blank(String s)
-{
-	foreach (c : s) {
-		if (c != ' ' && c != '\t' && c != '\r' && c != '\n') { return false; }
-	}
-	return true;
-}
-
 fn String read_stdin_all()
 {
 	DString buf = dstring::new(tmem);
@@ -286,22 +243,14 @@ fn String read_stdin_all()
 	return buf.str_view();
 }
 
-// C3 String → \0 结尾的 ZString（tmem 视图，立即传给 C 接口用）
-fn ZString zof(String s)
-{
-	DString d = dstring::new(tmem);
-	d.append(s);
-	return d.zstr_view();
-}
-
-// C 字符串 → C3 String
+// C 字符串 → C3 String（copy 补尾部 NUL，可安全交给 cjson .set 等 C 侧）
 fn String zcopy(char* c)
 {
 	if (!c) { return ""; }
 	usz n = libc::strlen((ZString)c);
 	DString d = dstring::new(tmem);
 	for (usz i = 0; i < n; i++) { d.append_char(c[i]); }
-	return d.str_view();
+	return d.str_view().copy(tmem);
 }
 
 // ===========================================================================
@@ -311,8 +260,8 @@ fn String zcopy(char* c)
 
 fn void parse_env_line(String raw)
 {
-	String line = str_trim(raw);
-	if (line.starts_with("export ")) { line = str_trim(line[7 : line.len - 7]); }
+	String line = raw.trim();
+	if (line.starts_with("export ")) { line = line[7 : line.len - 7].trim(); }
 	if (line.len == 0) { return; }
 	char c0 = line[0];
 	if (!((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z') || c0 == '_')) { return; }
@@ -323,7 +272,7 @@ fn void parse_env_line(String raw)
 	foreach (c : name) {
 		if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) { return; }
 	}
-	String value = str_trim(line[eq + 1 : line.len - eq - 1]);
+	String value = line[eq + 1 : line.len - eq - 1].trim();
 	if (value.len >= 2 && ((value[0] == '"' && value[value.len - 1] == '"')
 		|| (value[0] == '\'' && value[value.len - 1] == '\''))) {
 		value = value[1 : value.len - 2];
@@ -355,87 +304,13 @@ fn String state_home()
 }
 
 // ===========================================================================
-// JSON 访问辅助（cjson 之上的一层点路径语法糖）
-// ===========================================================================
-
-// 点路径访问："choices.0.message.content"，数字段为数组下标
-fn CJsonItem* jwalk(CJsonItem* root, String dotted)
-{
-	CJsonItem* cur = root;
-	usz start = 0;
-	for (usz i = 0; i <= dotted.len; i++) {
-		if (i == dotted.len || dotted[i] == '.') {
-			if (!cur) { return null; }
-			String seg = dotted[start : i - start];
-			if (seg.len == 0) { return null; }
-			bool numeric = true;
-			foreach (c : seg) {
-				if (c < '0' || c > '9') { numeric = false; break; }
-			}
-			if (numeric) {
-				int? n = seg.to_int();
-				if (catch n) { return null; }
-				cur = cjson::get_array_item(cur, n);
-			} else {
-				cur = cjson::get_object_item(cur, zof(seg));
-			}
-			start = i + 1;
-		}
-	}
-	return cur;
-}
-
-fn String jtext(CJsonItem* root, String path)
-{
-	CJsonItem* v = jwalk(root, path);
-	if (!v || !cjson::is_string(v)) { return ""; }
-	return zcopy(v.valuestring);
-}
-
-fn bool jtext_eq(CJsonItem* root, String path, String expect)
-{
-	CJsonItem* v = jwalk(root, path);
-	if (!v || !cjson::is_string(v)) { return false; }
-	return zcopy(v.valuestring) == expect;
-}
-
-fn long jnum_child(CJsonItem* obj, String key, long def)
-{
-	CJsonItem* v = cjson::get_object_item(obj, zof(key));
-	if (!v || !cjson::is_number(v)) { return def; }
-	return (long)v.valuedouble;
-}
-
-// JSON 字符串转义（仅用于手工拼接的 usage/health 记录）
-fn String jescape(String s)
-{
-	DString b = dstring::new(tmem);
-	foreach (c : s) {
-		switch (c) {
-			case '"': b.append_string("\\\"");
-			case '\\': b.append_string("\\\\");
-			case '\n': b.append_string("\\n");
-			case '\r': b.append_string("\\r");
-			case '\t': b.append_string("\\t");
-			default: {
-				if ((uint)c < 0x20) {
-					b.appendf("\\u%04x", (uint)c);
-				} else {
-					b.append_char(c);
-				}
-			}
-		}
-	}
-	return b.str_view();
-}
-
-// ===========================================================================
 // payload 构建（OpenAI chat-completions）
+// 请求结构体定义 / 消息解析 / JSON 序列化都在 src/model/model.c3（module model）。
 // ===========================================================================
 
 fn String tokens_field()
 {
-	if (pfx(g_model, "o1") || pfx(g_model, "o3") || pfx(g_model, "o4") || pfx(g_model, "gpt-5")) {
+	if (g_model.starts_with("o1") || g_model.starts_with("o3") || g_model.starts_with("o4") || g_model.starts_with("gpt-5")) {
 		return "max_completion_tokens";
 	}
 	return "max_tokens";
@@ -444,51 +319,40 @@ fn String tokens_field()
 // 返回 tmem 视图，调用方立即使用
 fn String build_payload()
 {
-	CJsonItem* messages;
+	model::ChatRequest req;
+	req.model = g_model;
+	req.messages.init(tmem);
+	// 全流式：请求恒为 stream:true（打字机效果），并请求 usage 随流返回
+	req.stream = true;
+	req.max_tokens_key = tokens_field();
+	req.max_tokens = g_max_tokens_n;
+	req.stream_include_usage = true;
+	req.reasoning = g_thinking;
+	req.reasoning_effort = g_thinking_level;
+	req.reasoning_summary = "auto";
+
+	// messages：-M/--messages-file 整段结构化解析（超出字段表达能力的消息原样
+	// 透传）；否则单条 user prompt。system prompt 始终前置。
+	if (g_system.len > 0) {
+		req.messages.push(model::new_message(tmem, "system", g_system));
+	}
 	if (g_messages.len > 0) {
-		messages = cjson::parse(zof(g_messages));
-		if (!messages) { die("Invalid JSON in --messages / --messages-file"); }
-		if (!cjson::is_array(messages)) {
+		int rc = model::parse_messages_json(&req.messages, tmem, g_messages);
+		if (rc == -1) { die("Invalid JSON in --messages / --messages-file"); }
+		if (rc != 0) {
 			die("--messages must be a JSON array of {role, content} objects");
 		}
 	} else {
-		messages = cjson::create_array();
-		CJsonItem* m = cjson::create_object();
-		(void)cjson::add_item_to_object(m, "role", cjson::create_string(zof("user")));
-		(void)cjson::add_item_to_object(m, "content", cjson::create_string(zof(g_prompt)));
-		(void)cjson::add_item_to_array(messages, m);
+		req.messages.push(model::new_message(tmem, "user", g_prompt));
 	}
-	if (g_system.len > 0) {
-		CJsonItem* sys = cjson::create_object();
-		(void)cjson::add_item_to_object(sys, "role", cjson::create_string(zof("system")));
-		(void)cjson::add_item_to_object(sys, "content", cjson::create_string(zof(g_system)));
-		(void)cjson::insert_item_in_array(messages, 0, sys);
-	}
-	CJsonItem* payload = cjson::create_object();
-	(void)cjson::add_item_to_object(payload, "model", cjson::create_string(zof(g_model)));
-	(void)cjson::add_item_to_object(payload, "messages", messages); // 所有权随之转移
-	(void)cjson::add_item_to_object(payload, "stream", g_stream ? cjson::create_true() : cjson::create_false());
-	(void)cjson::add_item_to_object(payload, zof(tokens_field()), cjson::create_number((double)g_max_tokens_n));
-	if (g_stream) {
-		CJsonItem* so = cjson::create_object();
-		(void)cjson::add_item_to_object(so, "include_usage", cjson::create_true());
-		(void)cjson::add_item_to_object(payload, "stream_options", so);
-	}
-	// --thinking 是无条件开关：传了就发 reasoning，不看模型名。
-	// 给了 LEVEL 才写 effort，否则交给服务端默认。
-	if (g_thinking) {
-		CJsonItem* r = cjson::create_object();
-		if (g_thinking_level.len > 0) {
-			(void)cjson::add_item_to_object(r, "effort", cjson::create_string(zof(g_thinking_level)));
-		}
-		(void)cjson::add_item_to_object(r, "summary", cjson::create_string(zof("auto")));
-		(void)cjson::add_item_to_object(payload, "reasoning", r);
-	}
+
+	CJsonItem* payload = model::request_to_cjson(&req, tmem);
+
 	// LLM_EXTRA_BODY：JSON object 合并进请求体，同名键覆盖默认值（如
 	// llama-server 的 chat_template_kwargs）
 	String extra = env_str("LLM_EXTRA_BODY");
 	if (extra.len > 0) {
-		CJsonItem* x = cjson::parse(zof(extra));
+		CJsonItem* x = cjson::parse(extra.zstr_tcopy());
 		if (!x || !cjson::is_object(x)) { die("LLM_EXTRA_BODY must be a JSON object"); }
 		for (CJsonItem* m = x.child; m != null; ) {
 			CJsonItem* next = m.next;
@@ -498,9 +362,8 @@ fn String build_payload()
 		}
 		cjson::delete(x);
 	}
-	ZString out = cjson::print_unformatted(payload);
-	String s = zcopy(out);
-	cjson::free((void*)out);
+
+	String s = model::json_to_string(payload, tmem);
 	cjson::delete(payload);
 	return s;
 }
@@ -525,15 +388,8 @@ fn usz stream_write_cb(char* buffer, usz size, usz nitems, void* userdata)
 	return len;
 }
 
-fn usz collect_cb(char* buffer, usz size, usz nitems, void* userdata)
-{
-	usz len = size * nitems;
-	for (usz i = 0; i < len; i++) { g_resp.append_char(buffer[i]); }
-	return len;
-}
-
-// 单次 POST。成功返回 ""，失败返回错误描述；http_code 经指针带出。
-fn String http_attempt(String url, String payload, bool stream, int* http_code)
+// 单次流式 POST。成功返回 ""，失败返回错误描述；http_code 经指针带出。
+fn String http_attempt(String url, String payload, int* http_code)
 {
 	curl::Curl* h = curl::easy_init();
 	if (h == null) { die("curl: failed to init easy handle"); }
@@ -543,8 +399,8 @@ fn String http_attempt(String url, String payload, bool stream, int* http_code)
 
 	curl::easy_setopt(h, curl::CurlOption.NOPROGRESS, (CLong)1);
 	curl::easy_setopt(h, curl::CurlOption.ERRORBUFFER, &g_errbuf);
-	curl::easy_setopt(h, curl::CurlOption.URL, zof(url));
-	curl::easy_setopt(h, curl::CurlOption.POSTFIELDS, zof(payload));
+	curl::easy_setopt(h, curl::CurlOption.URL, url.zstr_tcopy());
+	curl::easy_setopt(h, curl::CurlOption.POSTFIELDS, payload.zstr_tcopy());
 	curl::easy_setopt(h, curl::CurlOption.POSTFIELDSIZE, (CLong)payload.len);
 	if (g_connect_timeout > 0) {
 		curl::easy_setopt(h, curl::CurlOption.CONNECTTIMEOUT, (CLong)g_connect_timeout);
@@ -559,15 +415,10 @@ fn String http_attempt(String url, String payload, bool stream, int* http_code)
 	curl::CurlSlist* hdrs = null;
 	hdrs = curl::slist_append(hdrs, (ZString)"Content-Type: application/json");
 	String auth = auth_header();
-	if (auth.len > 0) { hdrs = curl::slist_append(hdrs, zof(auth)); }
+	if (auth.len > 0) { hdrs = curl::slist_append(hdrs, auth.zstr_tcopy()); }
 	curl::easy_setopt(h, curl::CurlOption.HTTPHEADER, hdrs);
-	if (stream) {
-		curl::easy_setopt(h, curl::CurlOption.WRITEFUNCTION, &stream_write_cb);
-		curl::easy_setopt(h, curl::CurlOption.WRITEDATA, (void*)&g_ss);
-	} else {
-		curl::easy_setopt(h, curl::CurlOption.WRITEFUNCTION, &collect_cb);
-		curl::easy_setopt(h, curl::CurlOption.WRITEDATA, (void*)&g_resp);
-	}
+	curl::easy_setopt(h, curl::CurlOption.WRITEFUNCTION, &stream_write_cb);
+	curl::easy_setopt(h, curl::CurlOption.WRITEDATA, (void*)&g_ss);
 
 	curl::CurlResult res = curl::easy_perform(h);
 	CLong code = 0;
@@ -584,7 +435,7 @@ fn String http_attempt(String url, String payload, bool stream, int* http_code)
 }
 
 // ===========================================================================
-// usage / health / ledger
+// usage / ledger
 // ===========================================================================
 
 fn void write_usage(long u_in, long u_out, long u_think)
@@ -611,52 +462,13 @@ fn void write_usage(long u_in, long u_out, long u_think)
 	(void)file::save(g_usage_file, b.str_view());
 }
 
-fn String classify_error(String http_code, String message)
-{
-	if (http_code == "402") { return "credit"; }
-	if (http_code == "401" || http_code == "403") { return "auth"; }
-	if (http_code == "429") { return "rate"; }
-	String m = message.to_lower_tcopy();
-	if (m.contains("credit") || m.contains("billing") || m.contains("insufficient")
-		|| m.contains("quota") || m.contains("balance") || m.contains("payment")
-		|| m.contains("funds") || m.contains("budget")) { return "credit"; }
-	if ((m.contains("invalid") && m.contains("key")) || m.contains("authentication")
-		|| m.contains("unauthorized") || m.contains("api key") || m.contains("forbidden")
-		|| m.contains("permission")) { return "auth"; }
-	if ((m.contains("rate") && m.contains("limit")) || m.contains("too many requests")
-		|| m.contains("overloaded")) { return "rate"; }
-	return "other";
-}
-
-// Last-call health marker：每次调用后重写，供外部状态页读
-fn void note_health(bool ok, String http_code, String message)
-{
-	if (g_home.len == 0) { return; }
-	mkdir_p(string::tformat("%s/run", g_home));
-	DString b = dstring::new(tmem);
-	b.appendf("{\"ok\":%s,\"ts\":\"%s\",\"provider\":\"%s\",\"model\":\"%s\"",
-		ok ? "true" : "false", now_iso_utc(), jescape(g_provider_label), jescape(g_model));
-	if (!ok) {
-		b.appendf(",\"kind\":\"%s\",\"http_code\":", classify_error(http_code, message));
-		int code;
-		if (parse_int(http_code, &code) && code > 0) {
-			b.appendf("%d", code);
-		} else {
-			b.append_string("null");
-		}
-		b.appendf(",\"message\":\"%s\"", jescape(message));
-	}
-	b.append_char('}');
-	(void)file::save(string::tformat("%s/run/llm_health.json", g_home), b.str_view());
-}
-
 // usage 台账：每次成功调用追加一行 JSON
 fn void ledger_append()
 {
 	if (g_usage_file.len == 0) { return; }
-	String content = str_trim(load_file_or_empty(g_usage_file));
+	String content = load_file_or_empty(g_usage_file).trim();
 	if (content.len == 0) { return; }
-	CJsonItem* rec = cjson::parse(zof(content));
+	CJsonItem* rec = cjson::parse(content.zstr_tcopy());
 	if (!rec || !cjson::is_object(rec) || cjson::get_array_size(rec) == 0) {
 		if (rec) { cjson::delete(rec); }
 		return;
@@ -677,30 +489,34 @@ fn void ledger_append()
 	}
 	if (cut > 0) { mkdir_p(ledger[0 : cut]); }
 
-	DString b = dstring::new(tmem);
-	b.appendf("{\"ts\":\"%s\",\"provider\":\"%s\",\"model\":\"%s\"",
-		now_iso_utc(), jescape(g_provider_label), jescape(g_model));
+	// 直接用 cjson 构造台账 JSON（字符串转义交给序列化），不再手工拼串。
+	CJsonItem* entry = cjson::new_object(tmem);
+	entry.set("ts", now_iso_utc());
+	entry.set("provider", g_provider_label);
+	entry.set("model", g_model);
 	for (CJsonItem* m = rec.child; m != null; m = m.next) {
 		if (m.string != null && cjson::is_number(m)) {
-			b.appendf(",\"%s\":%d", jescape(zcopy(m.string)), (int)m.valuedouble);
+			entry.set(zcopy(m.string), (int)m.valuedouble);
 		}
 	}
 	String identity = env_str("IDENTITY_NAME");
 	if (identity.len == 0) {
 		String idir = env_str("IDENTITY_DIR");
-		if (idir.len > 0) { identity = basename(idir); }
+		if (idir.len > 0) { identity = basename(idir).copy(tmem); }
 	}
-	if (identity.len > 0) { b.appendf(",\"identity\":\"%s\"", jescape(identity)); }
+	if (identity.len > 0) { entry.set("identity", identity); }
 	String run_id = env_str("LLM_RUN_ID");
 	if (run_id.len == 0) { run_id = env_str("SHELLM_RUN_STEP_ID"); }
-	if (run_id.len > 0) { b.appendf(",\"run_id\":\"%s\"", jescape(run_id)); }
-	b.append_char('}');
+	if (run_id.len > 0) { entry.set("run_id", run_id); }
 	cjson::delete(rec);
+
+	String json_line = model::json_to_string(entry, tmem);
+	cjson::delete(entry);
 
 	File? fr = file::open(ledger, "a");
 	if (catch fr) { return; }
 	File f = fr;
-	(void)io::fprintf(&f, "%s\n", b.str_view());
+	(void)io::fprintf(&f, "%s\n", json_line);
 	(void)f.close();
 }
 
@@ -719,7 +535,8 @@ fn void pump_stream()
 	usz consumed = 0;
 	for (usz i = 0; i < view.len; i++) {
 		if (view[i] == '\n') {
-			handle_sse_line(trim_cr(view[consumed : i - consumed]));
+			// CRLF：行尾 \r 一并剥掉（SSE 各事件行按 \n 分割）
+			handle_sse_line(view[consumed : i - consumed].trim_right("\r"));
 			consumed = i + 1;
 		}
 	}
@@ -744,27 +561,22 @@ fn void handle_sse_line(String line)
 	g_ss.saw_data = true;
 	String json = line[6 : line.len - 6];
 	if (json == "[DONE]") { return; }
-	CJsonItem* root = cjson::parse(zof(json));
-	if (!root) { return; }
-	CJsonItem* content = jwalk(root, "choices.0.delta.content");
-	if (content && cjson::is_string(content)) {
-		String delta = zcopy(content.valuestring);
-		if (delta.len > 0) {
-			g_ss.emitted = true;
-			io::print(delta);
-			File* so = io::stdout();
-			(void)so.flush();
-		}
+	model::ChatStreamChunk? chunk_r = model::parse_stream_chunk(tmem, json);
+	if (catch chunk_r) { return; }
+	model::ChatStreamChunk chunk = chunk_r;
+	if (chunk.delta_content.len > 0) {
+		g_ss.emitted = true;
+		io::print(chunk.delta_content);
+		File* so = io::stdout();
+		(void)so.flush();
 	}
-	if (jtext_eq(root, "choices.0.finish_reason", "length")) { warn_truncated(); }
-	CJsonItem* usage = cjson::get_object_item(root, "usage");
-	if (usage && cjson::is_object(usage)) {
-		g_ss.u_in = jnum_child(usage, "prompt_tokens", g_ss.u_in);
-		g_ss.u_out = jnum_child(usage, "completion_tokens", g_ss.u_out);
-		CJsonItem* det = cjson::get_object_item(usage, "completion_tokens_details");
-		if (det) { g_ss.u_think = jnum_child(det, "reasoning_tokens", g_ss.u_think); }
+	if (chunk.finish_reason == "length") { warn_truncated(); }
+	if (chunk.has_usage) {
+		// 字段缺省为 -1：保持旧值（usage 可能跨帧下发，每帧只带部分计数）
+		if (chunk.usage.prompt_tokens >= 0) { g_ss.u_in = chunk.usage.prompt_tokens; }
+		if (chunk.usage.completion_tokens >= 0) { g_ss.u_out = chunk.usage.completion_tokens; }
+		if (chunk.usage.reasoning_tokens >= 0) { g_ss.u_think = chunk.usage.reasoning_tokens; }
 	}
-	cjson::delete(root);
 }
 
 fn void run_streaming(String url, String payload)
@@ -780,16 +592,15 @@ fn void run_streaming(String url, String payload)
 		g_ss.err_buf = dstring::new(tmem);
 
 		int http_code = 0;
-		String err = http_attempt(url, payload, true, &http_code);
+		String err = http_attempt(url, payload, &http_code);
 		// 流结束：处理最后一段没有换行符的内容（read-until-EOF 语义）
 		String tail = g_ss.pending.str_view();
 		if (tail.len > 0) {
-			handle_sse_line(trim_cr(tail));
+			handle_sse_line(tail.trim_right("\r"));
 			g_ss.pending.clear();
 		}
 
 		if (err.len == 0 && g_ss.emitted) {
-			note_health(true, "", "");
 			write_usage(g_ss.u_in, g_ss.u_out, g_ss.u_think);
 			ledger_append();
 			return;
@@ -799,11 +610,10 @@ fn void run_streaming(String url, String payload)
 		if (err.len == 0 && !g_ss.emitted) {
 			// 没有任何 data 事件时，缓冲行是 API 错误体（优先于 empty response）
 			if (!g_ss.saw_data && g_ss.err_buf.len() > 0) {
-				CJsonItem* err_root = cjson::parse(zof(g_ss.err_buf.str_view()));
-				if (err_root) {
-					String em = jtext(err_root, "error.message");
-					if (em.len > 0) { retry_msg = string::tformat("API error: %s", em); }
-					cjson::delete(err_root);
+				if (try err_r = model::parse_response(tmem, g_ss.err_buf.str_view())) {
+					if (err_r.error_message.len > 0) {
+						retry_msg = string::tformat("API error: %s", err_r.error_message);
+					}
 				}
 			}
 			if (retry_msg.len == 0) {
@@ -820,109 +630,8 @@ fn void run_streaming(String url, String payload)
 			continue;
 		}
 		String shown = retry_msg.len > 0 ? retry_msg : string::tformat("HTTP %d", http_code);
-		note_health(false, string::tformat("%d", http_code), shown);
 		die(shown);
 	}
-}
-
-// ===========================================================================
-// 非流式路径
-// ===========================================================================
-
-fn String check_embedded_error(String body)
-{
-	CJsonItem* root = cjson::parse(zof(body));
-	if (!root) { return ""; }
-	String em = jtext(root, "error.message");
-	if (em.len == 0) { em = jtext(root, "choices.0.error.message"); }
-	if (em.len == 0 && jtext_eq(root, "choices.0.finish_reason", "error")) {
-		em = "finish_reason \"error\" (provider failed mid-generation)";
-	}
-	cjson::delete(root);
-	return em;
-}
-
-fn void run_blocking(String url, String payload)
-{
-	int max_attempts = g_retries + 1;
-	int http_code = 0;
-	int attempt = 1;
-	for (; ; attempt++) {
-		g_resp = dstring::new(tmem);
-		String err = http_attempt(url, payload, false, &http_code);
-
-		bool transient = err.len > 0 || http_code == 408 || http_code == 429
-			|| (http_code >= 500 && http_code <= 599);
-		if (transient && attempt < max_attempts) {
-			String cause = err.len > 0 ? err : string::tformat("HTTP %d", http_code);
-			io::eprintfn("llm: transient API failure (attempt %d/%d): %s — retrying",
-				attempt, max_attempts, cause);
-			thread::sleep_ms((long)g_backoff * attempt * 1000);
-			continue;
-		}
-
-		// 2xx 里也可能内嵌失败（OpenRouter 风格的 200 + error）
-		if (err.len == 0 && http_code > 0 && http_code < 400) {
-			String body = g_resp.str_view();
-			String embedded_err = is_blank(body)
-				? "whitespace-only response body"
-				: check_embedded_error(body);
-			if (embedded_err.len > 0) {
-				if (attempt < max_attempts) {
-					io::eprintfn("llm: transient API failure (attempt %d/%d): %s — retrying",
-						attempt, max_attempts, embedded_err);
-					thread::sleep_ms((long)g_backoff * attempt * 1000);
-					continue;
-				}
-				note_health(false, string::tformat("%d", http_code), embedded_err);
-				die(string::tformat("API error: %s", embedded_err));
-			}
-		}
-		break;
-	}
-
-	if (http_code >= 400 || http_code == 0) {
-		String body = g_resp.str_view();
-		CJsonItem* root = cjson::parse(zof(body));
-		String msg = "";
-		if (root) {
-			msg = jtext(root, "error.message");
-			if (msg.len == 0) { msg = jtext(root, "message"); }
-			cjson::delete(root);
-		}
-		String shown = msg.len > 0 ? msg : string::tformat("HTTP %d", http_code);
-		note_health(false, string::tformat("%d", http_code), shown);
-		if (msg.len > 0) { die(string::tformat("API error (HTTP %d): %s", http_code, msg)); }
-		die(string::tformat("API error (HTTP %d)", http_code));
-	}
-	note_health(true, "", "");
-
-	String body = g_resp.str_view();
-	CJsonItem* root = cjson::parse(zof(body));
-
-	long u_in = -1;
-	long u_out = -1;
-	long u_think = -1;
-	if (root) {
-		CJsonItem* usage = cjson::get_object_item(root, "usage");
-		if (usage && cjson::is_object(usage)) {
-			u_in = jnum_child(usage, "prompt_tokens", -1);
-			u_out = jnum_child(usage, "completion_tokens", -1);
-			CJsonItem* det = cjson::get_object_item(usage, "completion_tokens_details");
-			if (det) { u_think = jnum_child(det, "reasoning_tokens", -1); }
-		}
-		if (jtext_eq(root, "choices.0.finish_reason", "length")) { warn_truncated(); }
-	}
-	write_usage(u_in, u_out, u_think);
-	ledger_append();
-
-	if (g_raw) {
-		io::print(body);
-	} else if (root) {
-		CJsonItem* c = jwalk(root, "choices.0.message.content");
-		if (c && cjson::is_string(c)) { io::printfn("%s", zcopy(c.valuestring)); }
-	}
-	if (root) { cjson::delete(root); }
 }
 
 // ===========================================================================
@@ -962,13 +671,12 @@ fn int main(String[] args)
 	g_usage_file = env_str("LLM_USAGE_FILE");
 	String prov = env_str("LLM_PROVIDER");
 	if (prov.len > 0) { g_provider_label = prov; }
-	int v;
-	if (parse_int(env_str("LLM_RETRIES"), &v)) { g_retries = v; }
-	if (parse_int(env_str("LLM_RETRY_BACKOFF"), &v)) { g_backoff = v; }
-	if (parse_int(env_str("LLM_CONNECT_TIMEOUT"), &v)) { g_connect_timeout = v; }
-	if (parse_int(env_str("LLM_MAX_TIME"), &v)) { g_max_time = v; }
-	if (parse_int(env_str("LLM_SPEED_LIMIT"), &v)) { g_speed_limit = v; }
-	if (parse_int(env_str("LLM_SPEED_TIME"), &v)) { g_speed_time = v; }
+	if (try v = env_str("LLM_RETRIES").to_int()) { g_retries = v; }
+	if (try v = env_str("LLM_RETRY_BACKOFF").to_int()) { g_backoff = v; }
+	if (try v = env_str("LLM_CONNECT_TIMEOUT").to_int()) { g_connect_timeout = v; }
+	if (try v = env_str("LLM_MAX_TIME").to_int()) { g_max_time = v; }
+	if (try v = env_str("LLM_SPEED_LIMIT").to_int()) { g_speed_limit = v; }
+	if (try v = env_str("LLM_SPEED_TIME").to_int()) { g_speed_time = v; }
 
 	// 3) 参数解析
 	usz i = 1;
@@ -1001,12 +709,6 @@ fn int main(String[] args)
 		} else if (a == "--messages-file") {
 			i = opt_value(args, i, "--messages-file");
 			g_messages = load_file_arg(args[i], "Messages file not found");
-		} else if (a == "--stream") {
-			g_stream = true;
-		} else if (a == "--no-stream") {
-			g_stream = false;
-		} else if (a == "--raw") {
-			g_raw = true;
 		} else if (a == "--thinking") {
 			g_thinking = true;
 			// 只吞下合法的 LEVEL，否则 --thinking "问题" 会把问题吃掉当强度。
@@ -1042,8 +744,7 @@ fn int main(String[] args)
 	}
 
 	// 6) max tokens：仅接受显式数值，非数字/未提供一律用固定默认值
-	int mt;
-	if (parse_int(g_max_tokens, &mt)) {
+	if (try mt = g_max_tokens.to_int()) {
 		g_max_tokens_n = mt;
 	} else {
 		if (g_max_tokens.len > 0) {
@@ -1067,13 +768,9 @@ fn int main(String[] args)
 		die("curl: global_init failed");
 	}
 
-	// 10) 构建并发送
+	// 10) 构建并发送（全流式：SSE 打字机输出）
 	String payload = build_payload();
-	if (g_stream) {
-		run_streaming(url, payload);
-	} else {
-		run_blocking(url, payload);
-	}
+	run_streaming(url, payload);
 
 	if (g_usage_file_own) { rm_file(g_usage_file); }
 	curl::global_cleanup();
