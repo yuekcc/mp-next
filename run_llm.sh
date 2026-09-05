@@ -12,4 +12,4 @@ if [ -z "$prompt" ]; then
 fi
 
 
-./build/llm.exe --debug --thinking low --tools Bash --system-prompt "${system_prompt}" "${prompt}"
+./build/llm.exe --debug --thinking low --tools Bash,EditFile,ReadFile,WriteFile --system-prompt "${system_prompt}" "${prompt}"
