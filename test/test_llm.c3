@@ -416,10 +416,10 @@ struct CbCount
 	int n;
 }
 
-fn void sse_agg_cb(api::ChatStreamChunk* chunk, void* ud)
+fn void sse_agg_cb(api::ChatStreamChunk* chunk, void* cb_ud)
 {
 	(void)chunk;
-	CbCount* c = (CbCount*)ud;
+	CbCount* c = (CbCount*)cb_ud;
 	c.n++;
 }
 

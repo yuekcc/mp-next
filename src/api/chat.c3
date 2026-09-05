@@ -241,7 +241,7 @@ fn ChatResponse? complete(Allocator allocator, LlmOption* ctx, ChatRequest* req,
 // 流式入口：ChatRequest 进，逐 chunk 先回调后聚合（打字机/推理流由调用方回调
 // 决定输出），HTTP 传输成功且输出过 content 即返回聚合 ChatResponse。
 // ===========================================================================
-fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, LlmError* err, ChunkCb cb, void* ud)
+fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, LlmError* err, ChunkCb cb, void* cb_ud)
 {
 	String payload = "";
 	if (!make_payload(allocator, ctx, req, true, &payload, err)) { return MALFORMED_JSON~; }
@@ -254,7 +254,7 @@ fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, L
 		StreamRecv st;
 		st.allocator = allocator;
 		st.cb = cb;
-		st.cb_ud = ud;
+		st.cb_ud = cb_ud;
 		stream_reset(&st);
 
 		int http_code = 0;

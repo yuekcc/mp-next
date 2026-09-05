@@ -3,9 +3,10 @@
 2026-09-05 llm CLI 立项 agent loop（trace/turn）。决定：原 `llm::AppContext`（随模块  
 改名今为 `api::LlmOption`）继续住在 `src/api/context.c3`，只承载接口设置  
 （url/api_key/extra_body/debug/provider_label），`api::stream()/complete()` 只接收  
-`LlmOption*`；贯穿 trace 的数据中心是 agent 级 `AppContext`（`cmd/agent.c3`，  
-module llm），内嵌 `LlmOption` 并持有消息历史、请求参数与 `ToolHub*`。工具执行与  
-loop 编排全部留在 CLI 层。
+`LlmOption*`；贯穿 trace 的数据中心是 agent 级 `AppContext`（`cmd/llm.c3`，  
+module llm），持有消息历史、请求参数、`ToolHub*` 与字段级接口设置，调用 api 入口  
+前（`run_trace`）现场组装 `LlmOption`——AppContext 自身不引用 api 模块类型。  
+工具执行与 loop 编排全部留在 CLI 层。
 
 为什么：api 模块的重试/传输语义依赖无状态可重入；`tool` 模块 import 了 `log`/`cmd`/  
 `util`，api 模块若感知工具或会话，模块边界与依赖方向都无法成立。曾考虑把 trace 状态  

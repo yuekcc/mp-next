@@ -3,9 +3,10 @@
 // 职责边界（2026-09-05 agent loop 立项时定稿）：
 //   LlmOption（原 AppContext）只是「接口设置」数据形态：url/api_key/extra_body/
 //   provider_label/debug。api 模块无状态、不持有任何会话数据——trace
-//   级的数据中心是 agent 级 AppContext（cmd/agent.c3，module llm），其内嵌一个
-//   LlmOption。配置来源（env 工厂 cli_context_from_env）在调用方侧，模块内零
-//   环境变量访问。
+//   级的数据中心是 agent 级 AppContext（cmd/llm.c3，module llm），以字段级
+//   持有接口设置，调用 api 入口前（run_trace）现场组装 LlmOption；AppContext
+//   不引用本模块类型。配置来源（env 工厂 context_from_env）在调用方侧，模块内
+//   零环境变量访问。
 //   不进模块（属 CLI 交互层）：.env 文件加载、默认模型/默认 max_tokens、
 //   usage/ledger 路径、临时文件、提示词组装、agent loop。
 //

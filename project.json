@@ -19,7 +19,7 @@
     },
     "llm": {
       "type": "executable",
-      "sources": [ "cmd/llm.c3", "cmd/agent.c3" ]
+      "sources": [ "cmd/llm.c3" ]
     }
   }
 }

@@ -10,8 +10,8 @@ import std::core::string;
 import std::collections::list;
 
 // 流式 chunk 回调：每次成功解析出一个 data 帧即调用一次（先回调、再聚合）。
-// ud 为调用方透传。可空（null = 只聚合不通知）。
-alias ChunkCb = fn void(ChatStreamChunk* chunk, void* ud);
+// cb_ud 为调用方透传。可空（null = 只聚合不通知）。
+alias ChunkCb = fn void(ChatStreamChunk* chunk, void* cb_ud);
 
 // 单个 tool_call 的聚合槽（按 delta.index 对位；name/arguments 为流式增量累积，
 // id 只在首帧出现故整段替换）。持久化到调用方 allocator。
