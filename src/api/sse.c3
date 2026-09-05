@@ -1,10 +1,10 @@
-// sse — llm 模块的流式接收层：SSE 分帧、逐 chunk 解析、先回调后聚合。
+// sse — api 模块的流式接收层：SSE 分帧、逐 chunk 解析、先回调后聚合。
 //
 // 每尝试（attempt）一个 StreamRecv，curl 写回调把原始字节累积到 pending 后逐行
 // pump；整包字节不在此处理（见 chat.c3 的 BodyRecv）。chunk 回调收到的结构体
 // 只存活到回调返回（解析层 tmem 临时分配）；需要跨回调保存的调用方自行拷贝。
 // reasoning 是否打印、debug 通道选择由调用方回调决定，本层不感知。
-module llm;
+module api;
 
 import std::core::string;
 import std::collections::list;

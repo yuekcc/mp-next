@@ -1,4 +1,4 @@
-// chat — llm 模块的调用入口：双入口（complete 非流式 / stream 流式）、payload
+// chat — api 模块的调用入口：双入口（complete 非流式 / stream 流式）、payload
 // 序列化（extra body 合并）、重试退避、错误折叠。模块内无任何进程级 exit；
 // 失败以 fault 分类 + LlmError（HTTP code / 文案）表达，由调用方决定处理。
 //
@@ -14,7 +14,7 @@
 //  还折叠 choice 级 error / finish_reason=="error"）→ 空流文案 → HTTP <code>。
 // 所有需要跨出本调用的字符串（聚合响应、err.message）都分配在调用方传入的
 // allocator 内；临时解析缓冲一律走 tmem。
-module llm;
+module api;
 
 import std::io;
 import std::thread;

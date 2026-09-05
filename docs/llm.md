@@ -8,8 +8,8 @@
 
 | 项 | 位置 |
 |---|---|
-| CLI 入口 | `cmd/llmcmd.c3`（`module llmcmd`；.env/参数/提示词/打印/usage/ledger/die） |
-| LLM 调用模块 | `src/llm/`（`module llm`：wire 模型 + AppContext + 传输/SSE/重试，双入口 `complete`/`stream`） |
+| CLI 入口 | `cmd/llm.c3`（`module llm`；.env/参数/提示词/打印/usage/ledger/die） |
+| LLM 调用模块 | `src/api/`（`module api`：wire 模型 + LlmOption + 传输/SSE/重试，双入口 `complete`/`stream`） |
 | 构建目标 | `llm`（二进制名不变，`cmd/mem` 外部调用零改动） |
 
 ---
@@ -24,14 +24,14 @@ c3c build llm          # 单个目标
 产物输出到 `build/`（`project.json` 的 `output`）。依赖 `lib/curl.c3l`（libcurl 绑定）
 和 `lib/cjson.c3l`（cJSON 绑定）。
 
-分层约定（LLM 模块化重构 2026-09-05）：`cmd/llmcmd.c3` 只组装 `ChatRequest` 结构体、
+分层约定（LLM 模块化重构 2026-09-05）：`cmd/llm.c3` 只组装 `ChatRequest` 结构体、
 按字段消费聚合 `ChatResponse` / 逐 chunk 打印，不拼 JSON 字符串、不用点路径取字段；
-发送/接收/重试/错误折叠在 `src/llm/`（`module llm`）。wire 结构与编解码在
-`src/llm/model.c3`。失败以 fault 分类 + `LlmError{http_code, message}` 表达，
+发送/接收/重试/错误折叠在 `src/api/`（`module api`）。wire 结构与编解码在
+`src/api/model.c3`。失败以 fault 分类 + `LlmError{http_code, message}` 表达，
 模块内无进程级 exit，重试/退避收进模块（仅传输层错误与 HTTP 429/5xx 且未输出
 任何 chunk 才重试；4xx 立即失败；已输出部分内容永不重试）。模块对 stdout 零输出，
 唯一直接写 stderr 的是 `ctx.debug` 下的请求体 dump（`---\n<json>\n---`，诊断用途，
-同 curl VERBOSE 惯例）；内容/推理/瞬时失败通知经回调交 CLI 打印。
+同 curl VERBOSE 惯例）；内容/推理打印经回调交 CLI（重试期间静默）。
 
 ---
 
@@ -86,7 +86,7 @@ llm: warning: ignoring non-numeric max-tokens='abc', using 16384
 
 ### tokens 字段名
 
-请求体里该字段按模型前缀自动选名（`cmd/llmcmd.c3` 的 `tokens_field()`）：
+请求体里该字段按模型前缀自动选名（`cmd/llm.c3` 的 `tokens_field()`）：
 
 - `max_completion_tokens`：`o1` / `o3` / `o4` / `gpt-5` 前缀
 - `max_tokens`：其他
@@ -141,7 +141,7 @@ LLM_EXTRA_BODY='{"reasoning_effort":"none"}' llm -m any "hi"
 
 ### messages 保真透传
 
-`-M` / `--messages-file` 的每条消息走 `llm::parse_message`：
+`-M` / `--messages-file` 的每条消息走 `api::parse_message`：
 
 - 能用 `ChatMessage` 字段无损表达（键集属于
   `role/content/name/tool_call_id/reasoning/tool_calls`，且值都是字符串、`tool_calls` 是标准
@@ -198,7 +198,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 | `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong`（影响第二层 `.env` 与 ledger 默认路径） |
 | `LLM_MOCK_PORT` | 仅 `scripts/mock_llm.py` 使用，默认 8123 |
 
-传输/重试策略为 **llm 模块内置常量**（`src/llm/context.c3` 的 `DEFAULT_*`，一般无需修改），
+传输/重试策略为 **api 模块内置常量**（`src/api/context.c3` 的 `DEFAULT_*`，一般无需修改），
 不提供环境变量覆盖：建连超时 10s、单次尝试硬上限 600s、低速中止 100 B/s 持续 60s、
 瞬时失败重试 2 次（即最多 3 次尝试）、退避基数 1s（第 n 次等待 `n` 秒）。重试仅针对
 传输层错误与 HTTP 429/5xx，且**已输出部分内容后永不重试**；改默认值即改这些常量。
@@ -325,7 +325,7 @@ llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{
 - 重试只看瞬时错误：仅传输层错误与 HTTP 429/5xx 且未输出内容时重试，4xx 等确定性错误
   立即失败；重试策略为内置常量（2 次/退避 1s），无外部开关。
 - 传输层超时/低速中止同为内置常量（见「环境变量」末注）：建连 10s、单次尝试 600s、
-  100 B/s 持续 60s 断开。默认对绝大多数场景够用，极端网络需改 `src/llm/context.c3` 常量。
+  100 B/s 持续 60s 断开。默认对绝大多数场景够用，极端网络需改 `src/api/context.c3` 常量。
 - 非 2xx 且无 `error.message` 时只报 `HTTP <code>`。choice 级 `error` 与
   `finish_reason=="error"` 的信号只在非流式 `complete()` 入口折叠进错误文案
   （`response_error_message`）；CLI 恒走流式 `stream()`，该路径仅折叠顶层

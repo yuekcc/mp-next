@@ -1,4 +1,4 @@
-# mp-next — llmcmd agent loop
+# mp-next — llm agent loop
 
 llm CLI（chat-completions）的领域词汇表：围绕 agent loop 的 trace/turn 概念与两层上下文结构。
 
@@ -22,11 +22,11 @@ _Avoid_: done, finish（`finish_reason` 是 wire 字段，不是领域词）
 
 **AppContext**:
 agent 级的 trace 数据中心：持有接口设置、请求参数、消息历史与工具注册表引用；贯穿整个 trace。
-_Avoid_: 把 llm 模块的接口设置结构（LlmOption）混称为 AppContext
+_Avoid_: 把 api 模块的接口设置结构（LlmOption）混称为 AppContext
 
 **LlmOption**:
-llm 模块的接口设置（端点、鉴权、extra body 等）；无状态，不含任何会话数据。
-_Avoid_: 旧称 AppContext（已从 llm 模块移出该名号）
+api 模块的接口设置（端点、鉴权、extra body 等）；无状态，不含任何会话数据。
+_Avoid_: 旧称 AppContext（已从 api 模块移出该名号）
 
 ### 工具
 

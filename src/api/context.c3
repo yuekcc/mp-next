@@ -1,9 +1,9 @@
-// context — llm 模块的接口设置（LlmOption）与内置传输/重试常量。
+// context — api 模块的接口设置（LlmOption）与内置传输/重试常量。
 //
 // 职责边界（2026-09-05 agent loop 立项时定稿）：
 //   LlmOption（原 AppContext）只是「接口设置」数据形态：url/api_key/extra_body/
-//   provider_label/debug。llm 模块无状态、不持有任何会话数据——trace
-//   级的数据中心是 agent 级 AppContext（cmd/agent.c3，module llmcmd），其内嵌一个
+//   provider_label/debug。api 模块无状态、不持有任何会话数据——trace
+//   级的数据中心是 agent 级 AppContext（cmd/agent.c3，module llm），其内嵌一个
 //   LlmOption。配置来源（env 工厂 cli_context_from_env）在调用方侧，模块内零
 //   环境变量访问。
 //   不进模块（属 CLI 交互层）：.env 文件加载、默认模型/默认 max_tokens、
@@ -11,7 +11,7 @@
 //
 // 传输/重试策略（建连超时、单次总时长、低速中止、重试次数与退避基数）属
 // 「一般无需修改」的固定项，直接内置为下方 DEFAULT_* 常量，无外部覆盖通道。
-module llm;
+module api;
 
 // 内置传输/重试策略（一般无需修改；改默认值即改行为）
 const String DEFAULT_URL = "https://api.openai.com/v1/chat/completions";

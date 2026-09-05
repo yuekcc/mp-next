@@ -61,7 +61,7 @@ fn bool kill_current_child()
 	return true;
 }
 
-// 关闭子进程 stdin 的共享实现见 util::close_stdin（cmd/memstore/llmcmd 单一来源）。
+// 关闭子进程 stdin 的共享实现见 util::close_stdin（cmd/memstore/llm 单一来源）。
 
 fn CommandResult? execute(Allocator allocator, String[] command_line)
 {

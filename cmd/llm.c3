@@ -1,7 +1,7 @@
-// llmcmd — 极简 LLM CLI（C3 版，复刻 headlong/bin/llm）
+// llm — 极简 LLM CLI（C3 版，复刻 headlong/bin/llm）
 // 仅支持 chat-completions 接口（OpenAI wire format：OpenAI / OpenRouter /
 // openai-compatible 共用同一条 wire 路径）。HTTP 传输/SSE 分帧/重试/错误折叠已
-// 抽到独立 llm 模块（src/llm/，见 LLM 模块化重构规格 2026-09-05）；本文件只保留
+// 抽到独立 api 模块（src/api/，见 LLM 模块化重构规格 2026-09-05）；本文件只保留
 // CLI 交互层职责：.env 加载、参数解析、提示词组装、逐 chunk 打印（打字机）、
 // usage/ledger、die/warn。恒为流式请求（打字机效果）。
 //
@@ -9,12 +9,12 @@
 // 中心）+ run_trace 循环 + ToolHub 工具派发（--tools 显式 opt-in）。本文件不再
 // 直接发送请求，组装初始消息后交给 run_trace。
 //
-// 模块名 llm_cli → llmcmd（二进制/target 名仍为 llm，mem/脚本/文档示例零改动）。
-module llmcmd;
+// 模块名与二进制/target 名一致：llm（演进 llm_cli → llmcmd → llm）。
+module llm;
 
 import std::io, std::io::file, std::io::path, std::os, std::os::env,
        std::collections::list, std::core::string, std::time::datetime,
-       libc, cjson, llm, tool, util;
+       libc, cjson, api, tool, util;
 
 // Windows 当前进程 PID / TTY 探测
 extern fn uint win_current_pid() @cname("GetCurrentProcessId") @feat(WIN32);
@@ -135,9 +135,9 @@ fn bool env_has(String name)
 
 // 从环境变量构造 LlmOption（env 读取属 CLI 交互层；llm 模块只消费数据）。
 // 必须在 .env 分层加载之后调用；返回后再按本 CLI 场景接 debug。
-fn llm::LlmOption cli_context_from_env()
+fn api::LlmOption cli_context_from_env()
 {
-	llm::LlmOption c = llm::default_options();
+	api::LlmOption c = api::default_options();
 	String url = env_str("LLM_API_URL");
 	if (url.len > 0) { c.url = url; }
 	c.api_key = env_str("LLM_API_KEY");
@@ -300,16 +300,16 @@ fn String tokens_field()
 fn void push_initial_messages(List{ChatMessage}* out)
 {
 	if (g_system.len > 0) {
-		out.push(llm::new_message(tmem, "system", g_system));
+		out.push(api::new_message(tmem, "system", g_system));
 	}
 	if (g_messages.len > 0) {
-		int rc = llm::parse_messages_json(tmem, out, g_messages);
+		int rc = api::parse_messages_json(tmem, out, g_messages);
 		if (rc == -1) { die("Invalid JSON in --messages / --messages-file"); }
 		if (rc != 0) {
 			die("--messages must be a JSON array of {role, content} objects");
 		}
 	} else {
-		out.push(llm::new_message(tmem, "user", g_prompt));
+		out.push(api::new_message(tmem, "user", g_prompt));
 	}
 }
 
@@ -389,7 +389,7 @@ fn void ledger_append()
 	if (run_id.len > 0) { entry.set("run_id", run_id); }
 	cjson::delete(rec);
 
-	String json_line = llm::json_to_string(tmem, entry);
+	String json_line = api::json_to_string(tmem, entry);
 	cjson::delete(entry);
 
 	File? fr = file::open(ledger, "a");
@@ -410,7 +410,7 @@ fn void warn_truncated()
 // 流式 chunk 回调（打字机打印属 CLI 职责；模块不感知输出通道）
 // ===========================================================================
 
-fn void chunk_cb(llm::ChatStreamChunk* chunk, void* ud)
+fn void chunk_cb(api::ChatStreamChunk* chunk, void* ud)
 {
 	(void)ud;
 	if (chunk.delta_content.len > 0) {
@@ -546,7 +546,7 @@ fn int main(String[] args)
 
 	// 7) LlmOption（url/api key/extra body/provider 来自 env，CLI 交互层）；
 	//    debug 按本 CLI 场景接线。provider 标签供 ledger 使用。
-	llm::LlmOption opt = cli_context_from_env();
+	api::LlmOption opt = cli_context_from_env();
 	opt.debug = g_debug;
 	g_provider_label = opt.provider_label;
 
@@ -560,7 +560,7 @@ fn int main(String[] args)
 	agent_setup_tools(g_tools);
 
 	// 10) libcurl 全局初始化（幂等）
-	if (!llm::init()) {
+	if (!api::init()) {
 		die("curl: global_init failed");
 	}
 
@@ -583,6 +583,6 @@ fn int main(String[] args)
 	run_trace(&actx);
 
 	if (g_usage_file_own) { rm_file(g_usage_file); }
-	llm::shutdown();
+	api::shutdown();
 	return 0;
 }

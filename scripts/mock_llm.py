@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""OpenAI-compatible mock server（随仓库保留，用于本地验证 cmd/llmcmd.c3）。
+"""OpenAI-compatible mock server（随仓库保留，用于本地验证 cmd/llm.c3）。
 
 纯标准库，零依赖。行为与 llama-server/vLLM 的 /v1/chat/completions 流式
 wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求，本 mock

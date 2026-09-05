@@ -1,7 +1,7 @@
-// transport — llm 模块的 libcurl 传输层：全局生命周期（幂等 init/shutdown）
+// transport — api 模块的 libcurl 传输层：全局生命周期（幂等 init/shutdown）
 // 与单次流式/整包 HTTP POST。不感知 SSE 语义，仅负责把响应字节交给调用方提供的
 // 写回调（WRITEDATA 携带每尝试的接收状态，替换原 CLI 的模块级全局 StreamState）。
-module llm;
+module api;
 
 import std::core::string;
 import libc, curl;

@@ -1,11 +1,11 @@
-// model — llm 模块的 chat-completions wire 模型（请求体 / 响应体结构体 + JSON 编解码）。
+// model — api 模块的 chat-completions wire 模型（请求体 / 响应体结构体 + JSON 编解码）。
 //
-// 原 src/model/model.c3（module model），随「LLM 模块化重构」迁入 src/llm/ 并折叠进
-// module llm（延续 tool/*、mini_pi api/* 的多文件单模块惯例；wire 层保持独立文件）。
+// 原 src/model/model.c3（module model），随「LLM 模块化重构」迁入 src/api/ 并折叠进
+// module api（延续 tool/* 的多文件单模块惯例；wire 层保持独立文件）。
 //
 // 对应 mini_pi/src/api/api.c3 一侧的概念模型：Message/ToolCall/Usage 等内部
 // 类型负责把 /chat/completions 的 wire JSON 变成强类型数据；本文件是独立叶子层
-// （只依赖 std + cjson），供 cmd/llmcmd.c3 这类 CLI 以及 llm 模块的传输/重试层使用。
+// （只依赖 std + cjson），供 cmd/llm.c3 这类 CLI 以及 api 模块的传输/重试层使用。
 //
 // 结构体只描述本项目用到的 OpenAI chat-completions 标准字段：
 //   - ChatRequest/ChatMessage/ChatToolCall  —— 请求侧（含 reasoning、tool_calls）
@@ -16,7 +16,7 @@
 // 保真策略：-M/--messages-file 传入的任意消息若超出 ChatMessage 字段能无损表达的
 // 范围（多模态 content 数组、未知扩展键、非标准 tool_call 结构），解析时整体落入
 // json_override，序列化时原样透传，绝不丢字段。
-module llm;
+module api;
 
 import std::core::string;
 import std::collections::list;
