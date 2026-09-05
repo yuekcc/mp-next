@@ -3,7 +3,7 @@
 命令行记忆库（C3 实现，复刻 `headlong/bin/mem`）。每条记忆是一个带 YAML frontmatter 的
 markdown 文件，落在一个普通目录里；`search` 子命令调用外部 `llm` 命令做语义检索。
 
-源码：`cmd/mem.c3` + `src/memstore.c3`，构建目标 `mem`。版本 `0.1.0`。
+版本 `0.1.0`（`mem --version`）。
 
 ---
 
@@ -125,7 +125,8 @@ mem list -s 20 --type note --after 2026-08-01
 
 ### types
 
-按计数降序（同计数按类型名升序）输出 `  NN  type`。
+按计数降序（同计数按类型名升序）输出 `  NN  type`。类型取自 frontmatter 的 `type` 字段，
+没有该字段的记忆按空名统计（`list` 里则按 `memory` 显示）。
 
 ### show
 
@@ -134,10 +135,10 @@ mem show 72b37d6c      # hex id（4-8 位，前缀即可）
 mem show 2026-09-03-21-13-10_72b37d6c_mem-this-tool-should-work
 ```
 
-解析规则（`find_memory`）：
+id 解析规则：
 
-1. 参数是 4–8 位小写 hex → 在所有文件名 basename（去掉 `.md`）里匹配子串 `_<id>`。
-   命中 1 条即返回；命中多条报 `Ambiguous`。
+1. 参数是 4–8 位小写 hex → 在所有文件名（去掉 `.md`）里匹配子串 `_<id>`。命中 1 条即返回；
+   命中多条报 `Ambiguous`。
 2. 否则按 `<dir>/<id>.md` 精确匹配文件。
 3. 都失败报 `Memory not found: <id> (use hex ID prefix from 'mem list')`。
 
@@ -166,14 +167,15 @@ mem edit 72b37d6c --slug new-slug "新正文"
 
 `--slug` 只在**开头**被识别。剩余参数全部按空格拼接为正文；为空则读 stdin；仍为空则报错。
 
+成功后 stderr 打印 `Updated: <文件名去掉 .md>`（文件名变了则打印新名）。
+
 ### search
 
 ```bash
 mem search "上次讨论的 C3 坑"
 ```
 
-实现：把所有记忆拼成语料（`=== <文件名> ===` + 全文），经 stdin 喂给外部 `llm` 进程，
-用 `-s` 传入一个固定 prompt，要求只回「文件名 + summary，一行一条」。
+把所有记忆交给外部 `llm` 命令做语义检索，要求它只回「文件名 + summary，一行一条」。
 
 - 依赖 **PATH 里的 `llm` 可执行文件**（本项目 `llm` target 的产物）。找不到时报错退出。
 - 若设置了 `SHELLM_FAST_MODEL`，会额外传 `-m <model>`。

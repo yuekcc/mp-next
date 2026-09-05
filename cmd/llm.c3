@@ -36,7 +36,6 @@ const String USAGE =
 +++ "                           gpt-5.5 when OPENAI_API_KEY is set\n"
 +++ "  -s, --system-prompt TEXT System prompt text\n"
 +++ "  --system-prompt-file F   Read system prompt from file\n"
-+++ "  -t, --max-tokens N       Max output tokens. Default: 16384\n"
 +++ "  -M, --messages JSON      Messages array JSON, e.g. [{\"role\":\"user\",\"content\":\"hi\"}]\n"
 +++ "  --messages-file F        Read messages array JSON from file\n"
 +++ "  --thinking [LEVEL]       Enable reasoning (sent as reasoning.effort).\n"
@@ -62,7 +61,6 @@ const String USAGE =
 +++ "                                (default: https://api.openai.com/v1/chat/completions)\n"
 +++ "  LLM_MODEL                     Default model (same as -m)\n"
 +++ "  SHELLM_MODEL                  Fallback default model\n"
-+++ "  LLM_MAX_TOKENS                Default output cap (same as -t)\n"
 +++ "  LLM_EXTRA_BODY                JSON object merged into the request body\n"
 +++ "                                (keys override defaults; e.g. llama-server:\n"
 +++ "                                '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
@@ -73,9 +71,6 @@ const String USAGE =
 +++ "  echo \"summarize this\" | llm -m gpt-4o\n"
 +++ "  LLM_API_URL=http://localhost:11434/v1/chat/completions \\\n"
 +++ "    llm -m qwen3:8b \"explain quicksort\"\n";
-
-// 未在命令行/环境里显式指定时的输出 token 上限。
-const int DEFAULT_MAX_TOKENS = 16384;
 
 // ===========================================================================
 // agent 级 AppContext（trace 数据中心）
@@ -94,7 +89,6 @@ struct AppContext
 	bool debug;            // 请求体 dump 到 stderr 等诊断（stdout 不受影响）
 	String provider_label; // provider 台账标签（CLI 写 ledger 用；api 模块不消费）
 	String model;
-	int max_tokens;
 	bool thinking;               // --thinking（reasoning 对象开关）
 	String thinking_level;       // low/medium/high/xhigh，空 = 服务端默认
 	List{ChatMessage} messages;  // trace 消息历史（每 turn 追加 assistant/tool）
@@ -236,15 +230,6 @@ fn String state_home()
 // ChatRequest 组装（wire 结构体 / 消息解析 / JSON 序列化都在 api 模块内）
 // ===========================================================================
 
-// 请求体 token 上限字段名：o1/o3/o4/gpt-5 前缀用 max_completion_tokens。
-fn String tokens_field(String model)
-{
-	if (model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4") || model.starts_with("gpt-5")) {
-		return "max_completion_tokens";
-	}
-	return "max_tokens";
-}
-
 // 组装 trace 的初始消息：system 前置；-M/--messages-file 整段结构化解析（超出
 // 字段表达能力的消息原样透传）；否则单条 user prompt。追加进 agent 级
 // AppContext.messages（分配在 tmem，main 生命周期内有效）。
@@ -350,10 +335,11 @@ fn void ledger_append(AppContext* actx)
 	(void)f.close();
 }
 
-fn void warn_truncated(AppContext* actx)
+fn void warn_truncated()
 {
-	// 用解析后的数值 actx.max_tokens：未显式给 -t 时不会打印出 max_tokens= 空值。
-	io::eprintfn("llm: warning: output truncated at max_tokens=%d (reasoning tokens count against it) — raise with -t", actx.max_tokens);
+	// 上限由服务端（或其默认值）决定：本 CLI 不发 max_tokens，只能提示走 extra body。
+	io::eprintfn("llm: warning: output truncated (finish_reason=length) — the output cap "
+		"was hit; raise it with LLM_EXTRA_BODY (e.g. '{\"max_tokens\":32768}')");
 }
 
 // ===========================================================================
@@ -374,7 +360,7 @@ fn void chunk_cb(api::ChatStreamChunk* chunk, void* cb_ud)
 		File* se = io::stderr();
 		(void)se.flush();
 	}
-	if (chunk.finish_reason == "length") { warn_truncated(actx); }
+	if (chunk.finish_reason == "length") { warn_truncated(); }
 }
 
 // ===========================================================================
@@ -498,8 +484,6 @@ fn void run_trace(AppContext* actx)
 		api::ChatRequest req;
 		req.model = actx.model;
 		req.messages = actx.messages; // List 句柄共享（stream 不改写 messages）
-		req.max_tokens_key = tokens_field(actx.model);
-		req.max_tokens = actx.max_tokens;
 		req.reasoning = actx.thinking;
 		req.reasoning_effort = actx.thinking_level;
 		req.reasoning_summary = "auto";
@@ -565,8 +549,6 @@ fn int main(String[] args)
 	String system = "";
 	String messages = "";
 	String prompt = "";
-	String max_tokens_raw = "";
-	int max_tokens_n = DEFAULT_MAX_TOKENS;
 	bool thinking = false;
 	String thinking_level = "";
 	bool debug = false;
@@ -576,7 +558,6 @@ fn int main(String[] args)
 
 	// 1) 环境默认值
 	model = env_str("LLM_MODEL");
-	max_tokens_raw = env_str("LLM_MAX_TOKENS");
 	usage_file = env_str("LLM_USAGE_FILE");
 
 	// 2) 参数解析
@@ -601,9 +582,6 @@ fn int main(String[] args)
 		} else if (a == "--system-prompt-file") {
 			i = opt_value(args, i, "--system-prompt-file");
 			system = load_file_arg(args[i], "System prompt file not found");
-		} else if (a == "-t" || a == "--max-tokens") {
-			i = opt_value(args, i, "--max-tokens");
-			max_tokens_raw = args[i];
 		} else if (a == "-M" || a == "--messages") {
 			i = opt_value(args, i, "--messages");
 			messages = args[i];
@@ -649,39 +627,28 @@ fn int main(String[] args)
 		}
 	}
 
-	// 5) max tokens：仅接受显式数值，非数字/未提供一律用固定默认值
-	if (try mt = max_tokens_raw.to_int()) {
-		max_tokens_n = mt;
-	} else {
-		if (max_tokens_raw.len > 0) {
-			warn_msg(string::tformat("ignoring non-numeric max-tokens='%s', using %d", max_tokens_raw, DEFAULT_MAX_TOKENS));
-		}
-		max_tokens_n = DEFAULT_MAX_TOKENS;
-	}
-
-	// 6) 私有 usage 临时文件兜底
+	// 5) 私有 usage 临时文件兜底
 	if (usage_file.len == 0) {
 		usage_file = string::tformat("%s/llm-usage-%d.tmp", temp_dir(), current_pid());
 		usage_file_own = true;
 	}
 
-	// 7) 工具注册（--tools 显式 opt-in；init 前校验名单，未知名 die）
+	// 6) 工具注册（--tools 显式 opt-in；init 前校验名单，未知名 die）
 	ToolHub hub;
 	ToolHub* hub_ptr = agent_setup_tools(&hub, tools);
 
-	// 8) libcurl 全局初始化（幂等）
+	// 7) libcurl 全局初始化（幂等）
 	if (!api::init()) {
 		die("curl: global_init failed");
 	}
 
-	// 9) agent 级 AppContext（trace 数据中心）+ 初始消息 + run_trace 循环。
+	// 8) agent 级 AppContext（trace 数据中心）+ 初始消息 + run_trace 循环。
 	//     接口设置来自 env（context_from_env）；debug 按本 CLI
 	//     场景接线。AppContext 不持有 api 类型，run_trace 里现场组装 LlmOption。
 	AppContext actx;
 	context_from_env(&actx);
 	actx.debug = debug;
 	actx.model = model;
-	actx.max_tokens = max_tokens_n;
 	actx.thinking = thinking;
 	actx.thinking_level = thinking_level;
 	actx.messages.init(tmem);

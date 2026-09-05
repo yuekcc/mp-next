@@ -68,8 +68,6 @@ struct ChatRequest
 	String model;                 // 必填
 	List{ChatMessage} messages;   // 必填，>=1
 	bool stream;                  // 是否流式
-	String max_tokens_key;        // "max_tokens" 或 "max_completion_tokens"（请求方按模型选择）
-	long max_tokens;
 	bool stream_include_usage;    // stream 时额外携带 stream_options.include_usage
 	bool reasoning;               // 携带 reasoning 对象
 	String reasoning_effort;      // 非空才写 effort
@@ -336,9 +334,6 @@ fn CJsonItem* request_to_cjson(Allocator allocator, ChatRequest* req)
 		CJsonItem* so = cjson::new_object(allocator);
 		so.set_item("include_usage", json_create_bool(1));
 		body.set("stream_options", so);
-	}
-	if (req.max_tokens_key.len > 0) {
-		body.set(req.max_tokens_key, req.max_tokens);
 	}
 	if (req.reasoning) {
 		CJsonItem* r = cjson::new_object(allocator);

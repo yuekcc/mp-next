@@ -17,7 +17,7 @@ wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求
     think     先流式 reasoning 再 content（验证 --debug 打印 reasoning）。
               请求体带 reasoning 对象 → 标准字段 delta.reasoning；
               否则走 DeepSeek 私有 delta.reasoning_content 兼容分支。
-    length    收尾 finish_reason="length"（验证 max_tokens 截断警告）
+    length    收尾 finish_reason="length"（验证输出截断告警）
     dump      把收到的请求体 JSON 作为 content 原样回显（验证 payload 内容，
               如 -M 透传 / reasoning / LLM_EXTRA_BODY 合并结果）
     err400    HTTP 400 + {"error":{...}}（4xx 立即失败、不重试，无需额外配置）

@@ -68,8 +68,6 @@ fn void test_llm_req_bool_stream_false() @test
 	req.model = "m";
 	req.messages.init(tmem);
 	req.messages.push(api::new_message(tmem, "user", "hi"));
-	req.max_tokens_key = "";
-	req.max_tokens = 0;
 	req.reasoning = false;
 
 	CJsonItem* o = parse_json(req_json(&req, false));
@@ -89,7 +87,6 @@ fn void test_llm_req_stream_and_reasoning() @test
 	req.model = "m";
 	req.messages.init(tmem);
 	req.messages.push(api::new_message(tmem, "user", "hi"));
-	req.max_tokens_key = "";
 	req.reasoning = true;
 	req.reasoning_effort = "high";
 	req.reasoning_summary = "auto";
@@ -109,23 +106,6 @@ fn void test_llm_req_stream_and_reasoning() @test
 	test::eq("auto", r.get_key_string("summary", tmem) ?? "");
 }
 
-fn void test_llm_req_tokens_key() @test
-{
-	api::ChatRequest req;
-	req.model = "o3-mini";
-	req.messages.init(tmem);
-	req.messages.push(api::new_message(tmem, "user", "hi"));
-	req.max_tokens_key = "max_completion_tokens";
-	req.max_tokens = 321;
-
-	CJsonItem* o = parse_json(req_json(&req, false));
-	defer o.free();
-
-	test::eq(true, o.has_key("max_completion_tokens"));
-	test::eq(false, o.has_key("max_tokens"));
-	test::eq(321, o.get_key_int("max_completion_tokens") ?? 0);
-}
-
 // ===========================================================================
 // extra body 合并（make_payload：request 序列化 + 合并 + extra body 校验）
 // ===========================================================================
@@ -133,13 +113,11 @@ fn void test_llm_req_tokens_key() @test
 fn void test_llm_req_extra_body_merge() @test
 {
 	api::LlmOption ctx;
-	ctx.extra_body = "{\"temperature\":0.2,\"max_tokens\":99}";
+	ctx.extra_body = "{\"temperature\":0.2,\"model\":\"omni\"}";
 	api::ChatRequest req;
 	req.model = "m";
 	req.messages.init(tmem);
 	req.messages.push(api::new_message(tmem, "user", "hi"));
-	req.max_tokens_key = "max_tokens";
-	req.max_tokens = 123;
 
 	api::LlmError err;
 	String payload = "";
@@ -148,8 +126,7 @@ fn void test_llm_req_extra_body_merge() @test
 
 	CJsonItem* o = parse_json(payload);
 	defer o.free();
-	int mt = o.get_key_int("max_tokens") ?? 0; // extra body 同名键覆盖默认值
-	test::@check(99 == mt, "max_tokens override failed: got %d, payload=%s", mt, payload);
+	test::eq("omni", o.get_key_string("model", tmem) ?? ""); // extra body 同名键覆盖默认值
 	test::eq(true, o.has_key("temperature"));
 }
 
@@ -526,7 +503,6 @@ fn void test_llm_req_tools_json() @test
 	req.model = "m";
 	req.messages.init(tmem);
 	req.messages.push(api::new_message(tmem, "user", "hi"));
-	req.max_tokens_key = "";
 
 	// tools_json 非空 → 序列化为 "tools" 数组（ToolHub.schema() 同构）
 	req.tools_json = "[{\"type\":\"function\",\"function\":{\"name\":\"ReadFile\",\"parameters\":{\"type\":\"object\"}}}]";
