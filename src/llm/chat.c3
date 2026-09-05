@@ -4,7 +4,7 @@
 //
 // 输出通道约定：模块对 stdout 零输出；唯一直接写 stderr 的是 ctx.debug 为真时
 // 的请求体 dump（`---\n<json>\n---`，诊断用途，同 curl VERBOSE 惯例）。逐 chunk
-// 内容/推理打印、瞬时失败重试通知均经回调交给调用方（on_notice / ChunkCb）。
+// 内容/推理打印经回调交给调用方（ChunkCb）。
 //
 // 重试语义（D8，相对旧 CLI 的行为修正）：
 //   仅「传输层错误 / HTTP 429 / 5xx」且未输出任何 chunk 才重试（指数退避）；
@@ -102,15 +102,6 @@ fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, bool
 	return true;
 }
 
-// 瞬时失败重试通知（经 LlmOption.on_notice 转发；无前缀、无换行）。
-fn void notify_retry(LlmOption* ctx, int attempt, int max_attempts, String cause)
-{
-	if (ctx.on_notice == null) return;
-	String note = string::tformat("transient API failure (attempt %d/%d): %s — retrying",
-		attempt, max_attempts, cause);
-	ctx.on_notice(note, ctx.notice_ud);
-}
-
 // 尝试总次数：retries 次重试 + 初次尝试（常量；负数兜底为 0）。
 fn int attempt_budget()
 {
@@ -133,11 +124,10 @@ fn ChatResponse? fail_attempt(Allocator allocator, LlmError* err, int http_code,
 	}
 }
 
-// 可重试时：通知调用方并指数退避。attempt >= max_attempts 返回 false（不再等待）。
-fn bool retry_wait(LlmOption* ctx, int attempt, int max_attempts, String msg)
+// 可重试时：指数退避。attempt >= max_attempts 返回 false（不再等待）。
+fn bool retry_wait(int attempt, int max_attempts)
 {
 	if (attempt >= max_attempts) return false;
-	notify_retry(ctx, attempt, max_attempts, msg);
 	thread::sleep_ms((long)DEFAULT_BACKOFF * attempt * 1000);
 	return true;
 }
@@ -238,7 +228,7 @@ fn ChatResponse? complete(Allocator allocator, LlmOption* ctx, ChatRequest* req,
 			retryable = false;
 		}
 
-		if (retryable && retry_wait(ctx, attempt, max_attempts, msg))
+		if (retryable && retry_wait(attempt, max_attempts))
 		{
 			attempt++;
 			continue;
@@ -317,7 +307,7 @@ fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, L
 			retryable = false;
 		}
 
-		if (retryable && retry_wait(ctx, attempt, max_attempts, msg))
+		if (retryable && retry_wait(attempt, max_attempts))
 		{
 			attempt++;
 			continue;

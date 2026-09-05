@@ -2,7 +2,7 @@
 
 2026-09-05 llmcmd 立项 agent loop（trace/turn）。决定：原 `llm::AppContext` 改名  
 `LlmOption` 继续住在 `src/llm/context.c3`，只承载接口设置（url/api_key/extra_body/  
-debug/provider_label/on_notice），`llm::stream()/complete()` 只接收 `LlmOption*`；  
+debug/provider_label），`llm::stream()/complete()` 只接收 `LlmOption*`；  
 贯穿 trace 的数据中心是 agent 级 `AppContext`（`cmd/agent.c3`，module llmcmd），  
 内嵌 `LlmOption` 并持有消息历史、请求参数与 `ToolHub*`。工具执行与 loop 编排全部  
 留在 CLI 层。

@@ -134,7 +134,7 @@ fn bool env_has(String name)
 }
 
 // 从环境变量构造 LlmOption（env 读取属 CLI 交互层；llm 模块只消费数据）。
-// 必须在 .env 分层加载之后调用；返回后再按本 CLI 场景接 debug/on_notice。
+// 必须在 .env 分层加载之后调用；返回后再按本 CLI 场景接 debug。
 fn llm::LlmOption cli_context_from_env()
 {
 	llm::LlmOption c = llm::default_options();
@@ -427,13 +427,6 @@ fn void chunk_cb(llm::ChatStreamChunk* chunk, void* ud)
 	if (chunk.finish_reason == "length") { warn_truncated(); }
 }
 
-// 模块瞬时失败重试通知 → stderr（带 CLI 前缀，同旧行为）
-fn void notice_cb(String message, void* ud)
-{
-	(void)ud;
-	io::eprintfn("llm: %s", message);
-}
-
 // ===========================================================================
 // main
 // ===========================================================================
@@ -552,10 +545,9 @@ fn int main(String[] args)
 	}
 
 	// 7) LlmOption（url/api key/extra body/provider 来自 env，CLI 交互层）；
-	//    debug 与重试通知按本 CLI 场景接线。provider 标签供 ledger 使用。
+	//    debug 按本 CLI 场景接线。provider 标签供 ledger 使用。
 	llm::LlmOption opt = cli_context_from_env();
 	opt.debug = g_debug;
-	opt.on_notice = &notice_cb;
 	g_provider_label = opt.provider_label;
 
 	// 8) 私有 usage 临时文件兜底

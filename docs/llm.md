@@ -244,7 +244,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 ## 重试与错误处理
 
 单次尝试的流程：`HTTP POST` → SSE 按行解析 → 流尾没有换行符的残余内容也会处理（read-until-EOF）。
-重试与退避在 `llm` 模块内完成，CLI 只负责把瞬时失败通知打到 stderr。
+重试与退避在 `llm` 模块内完成，重试期间静默（不输出任何通知）。
 
 | 触发 | 行为 |
 |---|---|
@@ -256,13 +256,6 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 
 - 重试次数固定 2（最多 3 次尝试），退避 `DEFAULT_BACKOFF * attempt` 秒（基数 1s）——
   均为 llm 模块内置常量，无环境变量开关。
-- 重试前打印通知到 stderr（文案与旧版一致，只是不再对 4xx 触发）——
-
-  ```
-  llm: transient API failure (attempt 1/3): API error: mock 500 hiccup — retrying
-  llm: transient API failure (attempt 2/3): API error: mock 500 hiccup — retrying
-  ```
-
 - 4xx 立即失败并展示 API 返回的 error message，不再空等重试。实测：
 
   ```
