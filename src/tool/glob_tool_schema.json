@@ -1,0 +1,28 @@
+{
+  "type": "function",
+  "function": {
+    "name": "Glob",
+    "description": "Find files whose name or path matches a glob pattern. Only matches file names/paths, does not search file contents. Returns matching file paths with '/' separators. Respects .gitignore. The pattern is matched case-sensitively. Examples: 1) Find all TypeScript files under src: {'pattern':'**/*.ts','path':'src'} 2) Find all JSON files under src: {'pattern':'src/**/*.json'} 3) Find files named index.js in any folder: {'pattern':'index.js'}",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Glob pattern. Supports '*', '?' and character classes such as '[abc]'. Patterns without a '/' match file names at any depth, e.g. '*.ts' or 'index.js'. Patterns containing '/' match the path: a leading literal directory scopes the search to that directory ('src/**/*.json'), and '**/' matches any number of directories ('**/*.ts')."
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory to search recursively. Defaults to current directory. This is the only way to restrict which directory is searched; the pattern itself cannot."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Maximum number of file paths to return. Default 500."
+        }
+      },
+      "required": ["pattern"],
+      "additionalProperties": false
+    }
+  }
+}

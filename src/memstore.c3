@@ -2,7 +2,7 @@
 // 内存文件定位与随机 ID 生成。复刻 headlong/bin/mem（bash 版）的行为。
 module memstore;
 
-import std::io, std::io::file, std::io::path, std::os::env, std::os::process, std::os::win32;
+import std::io, std::io::file, std::io::path, std::os::env;
 import std::collections::list, std::sort, std::math::random, std::time::datetime, libc;
 
 const String VERSION = "0.1.0";
@@ -454,39 +454,6 @@ fn String random_hex8()
 }
 
 // ===========================================================================
-// 进程 stdin 处理
+// 进程 stdin 处理（共享实现见 util::read_stdin_all / util::close_stdin，
+// mem 与 llm CLI 各自需要完整读 stdin / 关闭子进程 stdin 触发 EOF）
 // ===========================================================================
-
-// 读完整个 stdin（无输入管道时返回空串）。
-// 注意：不用 io::read_fully——它对管道走 available() 预分配路径，拿到 0 就直接返回空。
-fn String read_stdin_all()
-{
-	DString buf = dstring::new(tmem);
-	char[4096] tmp @noinit;
-	File* in = io::stdin();
-	while (true)
-	{
-		sz? n = in.read(&tmp);
-		if (catch n) break;
-		if (n == 0) break;
-		buf.append_bytes(tmp[:n]);
-	}
-	return buf.str_view();
-}
-
-// 关闭子进程 stdin（写完搜索语料后触发 EOF）。
-fn void close_stdin(Process* process)
-{
-	if (process.stdin_file)
-	{
-		libc::fclose(process.stdin_file);
-		process.stdin_file = null;
-	}
-	$if env::WIN32:
-		if (process.hStdInput)
-		{
-			win32::closeHandle(process.hStdInput);
-			process.hStdInput = null;
-		}
-	$endif
-}

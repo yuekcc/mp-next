@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""OpenAI-compatible mock server（随仓库保留，用于本地验证 cmd/llm.c3）。
+"""OpenAI-compatible mock server（随仓库保留，用于本地验证 cmd/llmcmd.c3）。
 
 纯标准库，零依赖。行为与 llama-server/vLLM 的 /v1/chat/completions 流式
 wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求，本 mock
 也一律流式应答（'embed'/'err400' 两个错误场景除外）。
 
-用法:
+用法：
     python scripts/mock_llm.py [port]     # 默认 8123，可用 LLM_MOCK_PORT 覆盖
     LLM_API_URL=http://127.0.0.1:8123/v1/chat/completions LLM_MODEL=any \\
         ./build/llm.exe [--debug] [--thinking] "hello"
@@ -20,9 +20,11 @@ wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求
     length    收尾 finish_reason="length"（验证 max_tokens 截断警告）
     dump      把收到的请求体 JSON 作为 content 原样回显（验证 payload 内容，
               如 -M 透传 / reasoning / LLM_EXTRA_BODY 合并结果）
-    err400    HTTP 400 + {"error":{...}}（验证流式错误路径；建议 LLM_RETRIES=0
-              免等重试退避）
+    err400    HTTP 400 + {"error":{...}}（4xx 立即失败、不重试，无需额外配置）
     embed     HTTP 200 但响应体是 {"error":{...}}（非 SSE，验证 200+error）
+    toolcall  首词为 "toolcall" 且需 --tools ReadFile：第一 turn 发出分片的
+              ReadFile tool_call（验证 SSE tool_calls 聚合），工具执行后第二
+              turn 回答 TOOL-LOOP-OK（端到端验证 agent loop）。
 """
 
 import json
@@ -76,6 +78,19 @@ def handle_chat(h, body):
             last_user = m["content"]
             break
 
+    # toolcall 场景：第一条消息首词为 "toolcall" 时先发一个 ReadFile tool_call
+    #（读 CMakeLists.txt 的前 2 行），收到 role:"tool" 结果后再答最终文案。
+    # 用于端到端验证 agent loop：响应侧 tool_calls 聚合 → 工具执行 → tool 消息
+    # 回传 → 下一 turn。需要 --tools ReadFile。
+    def toolcall_requested(body):
+        return any(
+            isinstance(m.get("content"), str) and m["content"].strip().startswith("toolcall")
+            for m in body.get("messages", []) if m.get("role") == "user"
+        )
+
+    last_role = body.get("messages", [{}])[-1].get("role") if body.get("messages") else ""
+    toolcall_pending = toolcall_requested(body) and last_role != "tool"
+
     if scenario == "err400":
         send_error(h, 400, "mock 400: invalid request")
         return
@@ -90,7 +105,27 @@ def handle_chat(h, body):
     h.send_header("Connection", "close")
     h.end_headers()
 
-    if scenario == "dump":
+    if toolcall_pending:
+        # 分三片发 tool_call 增量：id+name 首帧全量，arguments 分两片（验证聚合）
+        tc1 = {"index": 0, "id": "call_mock_1", "type": "function",
+               "function": {"name": "ReadFile", "arguments": "{\"path\":\"CMakeLists"}}
+        ev1 = {"choices": [{"index": 0, "delta": {"tool_calls": [tc1]}}]}
+        sse_ev(w, ev1)
+        args2 = '.txt","limit":2}}'
+        tc2 = {"index": 0, "function": {"arguments": args2}}
+        ev2 = {"choices": [{"index": 0, "delta": {"tool_calls": [tc2]}}]}
+        sse_ev(w, ev2)
+        sse_ev(w, {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        sse_ev(w, {"usage": {"prompt_tokens": prompt_toks, "completion_tokens": 8,
+                             "completion_tokens_details": {"reasoning_tokens": 0}}})
+        stream_done(w)
+        return
+
+    if last_role == "tool" and toolcall_requested(body):
+        # 工具结果已回传 → 最终答案
+        text_parts = [("TOOL-LOOP-OK", "stop")]
+        think_toks = 0
+    elif scenario == "dump":
         pretty = json.dumps(body, ensure_ascii=False, indent=2)
         text_parts = [("```json\n" + pretty + "\n```", "stop")]
         think_toks = 0
@@ -173,7 +208,7 @@ def main():
     server.verbose = verbose  # type: ignore[attr-defined]
     print("mock llm listening on http://127.0.0.1:%d/v1/chat/completions" % port, flush=True)
     print("scenario keywords (first word of last user message): "
-          "stream echo think length dump err400 embed", flush=True)
+          "stream echo think length dump err400 embed toolcall", flush=True)
     server.serve_forever()
 
 

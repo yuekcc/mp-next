@@ -4,6 +4,7 @@ module mem_cli;
 
 import std::io, std::io::file, std::os::process, std::collections::list, std::sort, libc, std::core::string;
 import memstore;
+import util;
 
 const String USAGE =
     "mem — CLI memory store\n"
@@ -116,7 +117,7 @@ fn void action_search(Config* cfg, String query)
 	// 语料经 stdin 传入，避免命令行长度限制；写完即关 stdin 触发 EOF。
 	(void)p.write_stdin(string::tformat("Search these memories for: %s\n\n%s",
 		query, corpus.str_view()));
-	memstore::close_stdin(&p);
+	util::close_stdin(&p);
 
 	@pool()
 	{
@@ -358,7 +359,7 @@ fn void action_edit(Config* cfg, String name, String[] args)
 		tb.append(args[i]);
 	}
 	String text = tb.str_view();
-	if (text.len == 0) text = memstore::read_stdin_all();
+	if (text.len == 0) text = util::read_stdin_all();
 	if (text.len == 0) memstore::die("No text provided");
 
 	String now = memstore::now_created_ts();
@@ -508,7 +509,7 @@ fn void main(String[] args)
 			}
 			String add_text = join_args(rest[j:rest.len - j]);
 			// 无参数时从 stdin 读取（同 bash 版）
-			if (add_text.len == 0) add_text = memstore::read_stdin_all();
+			if (add_text.len == 0) add_text = util::read_stdin_all();
 			action_add(&cfg, add_text);
 		case "search":
 			if (rest.len < 1) memstore::die("Usage: mem search <query>");

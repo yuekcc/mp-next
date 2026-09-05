@@ -1,0 +1,46 @@
+{
+  "type": "function",
+  "function": {
+    "name": "Grep",
+    "description": "Recursively search file contents under a directory, or search a single file. Respects .gitignore. Returns matching lines with file path, line number, column number, and trimmed content. By default, `pattern` is interpreted as a regular expression. Set `literal` to true when searching for an exact string that may contain regex metacharacters. Examples: 1) Search exact 'TODO': {'pattern':'TODO','literal':true} 2) Search errors case-insensitively: {'pattern':'error|fail','ignoreCase':true} 3) Search only TypeScript files: {'pattern':'fetch','glob':'*.ts'}",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Search pattern. Interpreted as regex by default. Set `literal` to true to match this string literally."
+        },
+        "path": {
+          "type": "string",
+          "description": "File or directory to search. Defaults to current directory. If a directory is given, it is searched recursively."
+        },
+        "glob": {
+          "type": "string",
+          "description": "Optional file filter (gitignore-style glob). Patterns without '/' match file names at any depth, e.g. '*.ts' or '**/*.spec.ts'. Patterns containing '/' are matched against paths relative to the working directory, not relative to `path`, e.g. 'src/**/*.ts'. If omitted, all text files are searched."
+        },
+        "ignoreCase": {
+          "type": "boolean",
+          "description": "If true, perform case-insensitive matching. Default false."
+        },
+        "literal": {
+          "type": "boolean",
+          "description": "If true, treat `pattern` as a literal string instead of a regular expression. Set this when the search text contains characters like . * ( ) [ ] \\ ? + ^ $."
+        },
+        "context": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20,
+          "description": "Number of lines to show before and after each match. Default 0."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of matching lines to return. Default 100."
+        }
+      },
+      "required": ["pattern"],
+      "additionalProperties": false
+    }
+  }
+}

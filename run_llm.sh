@@ -6,4 +6,10 @@ export LLM_MODEL="any"
 
 system_prompt="You are a helpful software engineer assistant."
 
-./build/llm.exe --thinking low --system-prompt "${system_prompt}" "$@"
+prompt="$@"
+if [ -z "$prompt" ]; then
+  prompt="hi"
+fi
+
+
+./build/llm.exe --debug --thinking low --tools Bash --system-prompt "${system_prompt}" "${prompt}"

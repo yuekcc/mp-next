@@ -1,0 +1,54 @@
+{
+  "type": "function",
+  "function": {
+    "name": "HashEditFile",
+    "strict": true,
+    "description": "Edit a file using hash-anchored line references (read first with ReadFile to get `line:hash` tags). All anchors are verified atomically before any write; stale hashes reject the whole batch. Supports replace (default), range replace (endLine+endHash), insertAfter (insertAfter=true), and delete (content=\"\"). Edits must not overlap; insertAfter and endLine are mutually exclusive.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to edit (relative or absolute)"
+        },
+        "edits": {
+          "type": "array",
+          "description": "List of edit operations applied atomically in one batch.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "line": {
+                "type": "integer",
+                "description": "1-based line number of the anchor (must match the `line` from a ReadFile output)"
+              },
+              "hash": {
+                "type": "string",
+                "description": "2-char content hash of the anchor line (must match the `hash` from a ReadFile output)"
+              },
+              "content": {
+                "type": "string",
+                "description": "New content for the line(s). Passing an empty string DELETES the line(s). Use \\n to separate lines. Do NOT end the content with \\n: a trailing newline is treated as the terminator of the last line and will not create an extra blank line."
+              },
+              "endLine": {
+                "type": "integer",
+                "description": "For range edits only: 1-based END line (inclusive). Omit for a single-line edit."
+              },
+              "endHash": {
+                "type": "string",
+                "description": "For range edits only: 2-char hash of the end line."
+              },
+              "insertAfter": {
+                "type": "boolean",
+                "description": "If true, insert `content` AFTER the anchor line instead of replacing it."
+              }
+            },
+            "required": ["line", "hash", "content"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["path", "edits"],
+      "additionalProperties": false
+    }
+  }
+}

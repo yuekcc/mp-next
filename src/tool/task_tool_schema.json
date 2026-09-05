@@ -1,0 +1,27 @@
+{
+  "type": "function",
+  "function": {
+    "name": "Task",
+    "strict": true,
+    "description": "Run a subagent in a clean context and return a summary.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Subagent name, without '@'"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "task details"
+        },
+        "description": {
+          "type": "string",
+          "description": "A short description for the task"
+        }
+      },
+      "required": ["agent", "prompt", "description"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -4,8 +4,8 @@ import std::os::process;
 import std::os::win32;
 import std::io;
 import std::atomic;
-import libc;
 import log;
+import util;
 
 struct CommandResult
 {
@@ -61,24 +61,7 @@ fn bool kill_current_child()
 	return true;
 }
 
-// 注意必须传指针：进程退出后 std 的 join()/destroy() 还会再查一次这些字段，
-// 按值传会让调用方的 stdin_file/hStdInput 保留「已关闭」的悬空句柄，导致重复
-// close（Windows 句柄值被复用时会把不相干进程的句柄关掉 → 偶发 PROCESS_JOIN_FAILED）。
-fn void close_stdin(Process* process)
-{
-	if (process.stdin_file)
-	{
-		libc::fclose(process.stdin_file);
-		process.stdin_file = null;
-	}
-	$if env::WIN32:
-		if (process.hStdInput)
-		{
-			win32::closeHandle(process.hStdInput);
-			process.hStdInput = null;
-		}
-	$endif
-}
+// 关闭子进程 stdin 的共享实现见 util::close_stdin（cmd/memstore/llmcmd 单一来源）。
 
 fn CommandResult? execute(Allocator allocator, String[] command_line)
 {
@@ -86,7 +69,7 @@ fn CommandResult? execute(Allocator allocator, String[] command_line)
 	defer (void)process.destroy();
 
 	// 手工关闭 stdin，避免一直在等待输入
-	close_stdin(&process);
+	util::close_stdin(&process);
 
 	// 登记子进程（L2 中断时 UI 线程据此杀进程）；join 返回后清除。
 	$if env::WIN32:

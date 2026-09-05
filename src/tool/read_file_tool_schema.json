@@ -1,0 +1,27 @@
+{
+  "type": "function",
+  "function": {
+    "name": "ReadFile",
+    "strict": true,
+    "description": "Read the contents of a text file. For text files, output is truncated to 2000 lines. Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to read (relative or absolute)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Line number to start reading from (1-indexed)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of lines to read"
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    }
+  }
+}

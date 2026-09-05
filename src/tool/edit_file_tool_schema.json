@@ -1,0 +1,35 @@
+{
+  "type": "function",
+  "function": {
+    "name": "EditFile",
+    "strict": true,
+    "description": "Performs precision string replacement in a file. Requires an exact, unique match for 'old_string' unless 'allow_multiple' is set. Preserves indentation; line endings are normalized to \\n (LF) on write (CRLF input becomes LF). Matching uses \\n line endings regardless of the file's original style. Use this tool for surgical changes to specific parts of a file without rewriting it entirely.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "The path to the file to modify."
+        },
+        "old_string": {
+          "type": "string",
+          "description": "The exact literal text to replace. Must match exactly including whitespace and line endings."
+        },
+        "new_string": {
+          "type": "string",
+          "description": "The exact literal text to replace 'old_string' with."
+        },
+        "allow_multiple": {
+          "type": "boolean",
+          "description": "Optional: If true, replace all occurrences of 'old_string'. Defaults to false."
+        },
+        "instruction": {
+          "type": "string",
+          "description": "Optional: A brief description of the change."
+        }
+      },
+      "required": ["file_path", "old_string", "new_string"],
+      "additionalProperties": false
+    }
+  }
+}

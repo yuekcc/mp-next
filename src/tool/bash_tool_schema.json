@@ -1,0 +1,19 @@
+{
+  "type": "function",
+  "function": {
+    "name": "Bash",
+    "strict": true,
+    "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines. If truncated, full output is saved to a temp file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Bash command to execute"
+        }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    }
+  }
+}
