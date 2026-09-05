@@ -8,7 +8,7 @@
 
 | 项 | 位置 |
 |---|---|
-| CLI 入口 | `cmd/llm.c3`（`module llm`；.env/参数/提示词/打印/usage/ledger/die） |
+| CLI 入口 | `cmd/llm.c3`（`module llm`；参数/提示词/打印/usage/ledger/die） |
 | LLM 调用模块 | `src/api/`（`module api`：wire 模型 + LlmOption + 传输/SSE/重试，单入口 `stream`） |
 | 构建目标 | `llm`（二进制名不变，`cmd/mem` 外部调用零改动） |
 
@@ -195,25 +195,13 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 | `LLM_PROVIDER` | 仅作标签写入 ledger（`provider` 字段），默认 `chat-completions`，不影响行为 |
 | `LLM_RUN_ID` / `SHELLM_RUN_STEP_ID` | 写入 ledger 的 run_id（前者优先） |
 | `IDENTITY_DIR` / `IDENTITY_NAME` | 写 ledger 的 identity；`IDENTITY_NAME` 缺省取 `IDENTITY_DIR` 的 basename |
-| `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong`（影响第二层 `.env` 与 ledger 默认路径） |
+| `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong`（影响 ledger 默认路径） |
 | `LLM_MOCK_PORT` | 仅 `scripts/mock_llm.py` 使用，默认 8123 |
 
 传输/重试策略为 **api 模块内置常量**（`src/api/llm_option.c3` 的 `DEFAULT_*`，一般无需修改），
 不提供环境变量覆盖：建连超时 10s、单次尝试硬上限 600s、低速中止 100 B/s 持续 60s、
 瞬时失败重试 2 次（即最多 3 次尝试）、退避基数 1s（第 n 次等待 `n` 秒）。重试仅针对
 传输层错误与 HTTP 429/5xx，且**已输出部分内容后永不重试**；改默认值即改这些常量。
-
----
-
-## .env 加载
-
-分层加载，**真实环境变量始终优先**：
-
-1. `./.env`（当前工作目录）
-2. `$HEADLONG_HOME/.env`（或 `$SHELLM_HOME`、或 `~/.headlong/.env`）
-
-支持 `KEY=VALUE` 和 `export KEY=VALUE`；键名须为 `[A-Za-z_][A-Za-z0-9_]*`，值可带成对单/双
-引号。识别到的键若环境中已存在则跳过。
 
 ---
 

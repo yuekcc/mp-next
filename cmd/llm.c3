@@ -2,7 +2,7 @@
 // 仅支持 chat-completions 接口（OpenAI wire format：OpenAI / OpenRouter /
 // openai-compatible 共用同一条 wire 路径）。HTTP 传输/SSE 分帧/重试/错误折叠已
 // 抽到独立 api 模块（src/api/，见 LLM 模块化重构规格 2026-09-05）；本文件只保留
-// CLI 交互层职责：.env 加载、参数解析、提示词组装、逐 chunk 打印（打字机）、
+// CLI 交互层职责：参数解析、提示词组装、逐 chunk 打印（打字机）、
 // usage/ledger、die/warn，以及 agent loop（2026-09-05 立项，原 cmd/agent.c3
 // 并入）：agent 级 AppContext（trace 数据中心）+ run_trace 循环 + ToolHub
 // 工具派发（--tools 显式 opt-in，null hub = 纯 chat）。
@@ -68,11 +68,6 @@ const String USAGE =
 +++ "                                '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
 +++ "  LLM_PROVIDER                  Label only (ledger records); no behavior\n"
 +++ "\n"
-+++ ".env:\n"
-+++ "  Loaded layered: ./.env first, then $HEADLONG_HOME|$SHELLM_HOME|~/.headlong/.env.\n"
-+++ "  The real environment always wins; simple KEY=VALUE / export KEY=VALUE lines\n"
-+++ "  (optionally quoted) are supported.\n"
-+++ "\n"
 +++ "Examples:\n"
 +++ "  llm -m gpt-5.5 \"explain quicksort\"\n"
 +++ "  echo \"summarize this\" | llm -m gpt-4o\n"
@@ -137,15 +132,8 @@ fn String env_str(String name)
 	return v ?? "";
 }
 
-fn bool env_has(String name)
-{
-	String? v = env::tget_var(name);
-	if (catch v) { return false; }
-	return true;
-}
-
 // 把 env 中的接口设置读进 AppContext 字段（env 读取属 CLI 交互层；api 模块只
-// 消费数据）。必须在 .env 分层加载之后调用；url 留空 = api 模块默认端点。
+// 消费数据）。url 留空 = api 模块默认端点。
 fn void context_from_env(AppContext* actx)
 {
 	actx.url = env_str("LLM_API_URL");
@@ -232,46 +220,6 @@ fn String basename(String p)
 	usz i = p.len;
 	while (i > 0 && p[i - 1] != '/' && p[i - 1] != '\\') i--;
 	return p[i : p.len - i];
-}
-
-// ===========================================================================
-// .env 分层加载（简化版：KEY=VALUE / export KEY=VALUE，值可带引号）
-// 真实环境始终优先于文件。
-// ===========================================================================
-
-fn void parse_env_line(String raw)
-{
-	String line = raw.trim();
-	if (line.starts_with("export ")) { line = line[7 : line.len - 7].trim(); }
-	if (line.len == 0) { return; }
-	char c0 = line[0];
-	if (!((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z') || c0 == '_')) { return; }
-	sz? eq_r = line.index_of("=");
-	if (catch eq_r) { return; }
-	usz eq = (usz)eq_r;
-	String name = line[0 : eq];
-	foreach (c : name) {
-		if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) { return; }
-	}
-	String value = line[eq + 1 : line.len - eq - 1].trim();
-	if (value.len >= 2 && ((value[0] == '"' && value[value.len - 1] == '"')
-		|| (value[0] == '\'' && value[value.len - 1] == '\''))) {
-		value = value[1 : value.len - 2];
-	}
-	if (!env_has(name)) { (void)env::set_var(name, value, false); }
-}
-
-fn void load_env_file(String path)
-{
-	String content = load_file_or_empty(path);
-	if (content.len == 0) { return; }
-	usz start = 0;
-	for (usz i = 0; i <= content.len; i++) {
-		if (i == content.len || content[i] == '\n') {
-			parse_env_line(content[start : i - start]);
-			start = i + 1;
-		}
-	}
 }
 
 fn String state_home()
@@ -613,7 +561,6 @@ fn int main(String[] args)
 {
 	// 解析期 CLI 状态（main 局部，仅解析与装配阶段使用；运行期值在装配后经
 	// LlmOption / AppContext 传递，无模块级全局）。
-	String home = "";
 	String model = "";
 	String system = "";
 	String messages = "";
@@ -627,17 +574,12 @@ fn int main(String[] args)
 	String usage_file = "";
 	bool usage_file_own = false;
 
-	// 1) .env 分层加载：cwd 先行，状态目录补缺；真实环境始终优先。
-	load_env_file(".env");
-	home = state_home();
-	if (home.len > 0) { load_env_file(string::tformat("%s/.env", home)); }
-
-	// 2) 环境默认值（.env 已入环境，随后续 tget_var 生效）
+	// 1) 环境默认值
 	model = env_str("LLM_MODEL");
 	max_tokens_raw = env_str("LLM_MAX_TOKENS");
 	usage_file = env_str("LLM_USAGE_FILE");
 
-	// 3) 参数解析
+	// 2) 参数解析
 	usz i = 1;
 	bool positional = false;
 	while (i < args.len) {
@@ -689,13 +631,13 @@ fn int main(String[] args)
 		i++;
 	}
 
-	// 4) 无 prompt 且无 messages 时读 stdin（TTY 交互模式不读）
+	// 3) 无 prompt 且无 messages 时读 stdin（TTY 交互模式不读）
 	if (prompt.len == 0 && messages.len == 0 && !stdin_is_tty()) {
 		prompt = util::read_stdin_all();
 	}
 	if (prompt.len == 0 && messages.len == 0) { die("No prompt or messages provided"); }
 
-	// 5) 默认模型：SHELLM_MODEL → 有 key 时 gpt-5.5 → 报错
+	// 4) 默认模型：SHELLM_MODEL → 有 key 时 gpt-5.5 → 报错
 	if (model.len == 0) {
 		String sm = env_str("SHELLM_MODEL");
 		if (sm.len > 0) {
@@ -707,7 +649,7 @@ fn int main(String[] args)
 		}
 	}
 
-	// 6) max tokens：仅接受显式数值，非数字/未提供一律用固定默认值
+	// 5) max tokens：仅接受显式数值，非数字/未提供一律用固定默认值
 	if (try mt = max_tokens_raw.to_int()) {
 		max_tokens_n = mt;
 	} else {
@@ -717,23 +659,23 @@ fn int main(String[] args)
 		max_tokens_n = DEFAULT_MAX_TOKENS;
 	}
 
-	// 7) 私有 usage 临时文件兜底
+	// 6) 私有 usage 临时文件兜底
 	if (usage_file.len == 0) {
 		usage_file = string::tformat("%s/llm-usage-%d.tmp", temp_dir(), current_pid());
 		usage_file_own = true;
 	}
 
-	// 8) 工具注册（--tools 显式 opt-in；init 前校验名单，未知名 die）
+	// 7) 工具注册（--tools 显式 opt-in；init 前校验名单，未知名 die）
 	ToolHub hub;
 	ToolHub* hub_ptr = agent_setup_tools(&hub, tools);
 
-	// 9) libcurl 全局初始化（幂等）
+	// 8) libcurl 全局初始化（幂等）
 	if (!api::init()) {
 		die("curl: global_init failed");
 	}
 
-	// 10) agent 级 AppContext（trace 数据中心）+ 初始消息 + run_trace 循环。
-	//     接口设置来自 env（context_from_env，须在 .env 加载后）；debug 按本 CLI
+	// 9) agent 级 AppContext（trace 数据中心）+ 初始消息 + run_trace 循环。
+	//     接口设置来自 env（context_from_env）；debug 按本 CLI
 	//     场景接线。AppContext 不持有 api 类型，run_trace 里现场组装 LlmOption。
 	AppContext actx;
 	context_from_env(&actx);
