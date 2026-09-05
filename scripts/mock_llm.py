@@ -8,8 +8,8 @@ wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求
 
 用法：
     python scripts/mock_llm.py [port]     # 默认 8123，可用 LLM_MOCK_PORT 覆盖
-    LLM_API_URL=http://127.0.0.1:8123/v1/chat/completions LLM_MODEL=any \\
-        ./build/llm.exe [--debug] [--thinking] "hello"
+    ./build/llm.exe --api-url http://127.0.0.1:8123/v1/chat/completions \\
+        [--debug] [--thinking] [-m any] "hello"
 
 场景控制（看最后一条 user 消息的第一个词）:
     stream    默认：SSE 打字机输出 Hello world! + usage + [DONE]
@@ -19,7 +19,7 @@ wire 一致：SSE 打字机 + 末尾 usage 帧 + [DONE]。llm 恒为流式请求
               否则走 DeepSeek 私有 delta.reasoning_content 兼容分支。
     length    收尾 finish_reason="length"（验证输出截断告警）
     dump      把收到的请求体 JSON 作为 content 原样回显（验证 payload 内容，
-              如 -M 透传 / reasoning / LLM_EXTRA_BODY 合并结果）
+              如 -M 透传 / reasoning / --extra-body 合并结果）
     err400    HTTP 400 + {"error":{...}}（4xx 立即失败、不重试，无需额外配置）
     embed     HTTP 200 但响应体是 {"error":{...}}（非 SSE，验证 200+error）
     toolcall  首词为 "toolcall" 且需 --tools ReadFile：第一 turn 发出分片的

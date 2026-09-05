@@ -45,7 +45,7 @@ fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, Stri
 				cjson::delete(x);
 			}
 			err.http_code = 0;
-			err.message = string::format(allocator, "%s", "LLM_EXTRA_BODY must be a JSON object");
+			err.message = string::format(allocator, "%s", "extra_body must be a JSON object");
 			return false;
 		}
 		for (CJsonItem* m = x.child; m != null;)

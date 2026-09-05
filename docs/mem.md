@@ -178,7 +178,8 @@ mem search "上次讨论的 C3 坑"
 把所有记忆交给外部 `llm` 命令做语义检索，要求它只回「文件名 + summary，一行一条」。
 
 - 依赖 **PATH 里的 `llm` 可执行文件**（本项目 `llm` target 的产物）。找不到时报错退出。
-- 若设置了 `SHELLM_FAST_MODEL`，会额外传 `-m <model>`。
+- 传给 `llm` 的配置全部翻译成命令行开关（`llm` 不读环境变量，见 docs/adr/0002）：
+  `SHELLM_FAST_MODEL` → `-m`，`LLM_API_URL` → `--api-url`，`LLM_API_KEY` → `--api-key`。
 - 无记忆时直接输出 `No memories stored.` 并退出。
 - 子进程的退出码原样透传。
 
@@ -197,6 +198,8 @@ mem search "上次讨论的 C3 坑"
 | `MEM_DIR` | `--dir` | 记忆目录，默认 `./.memories` |
 | `MEM_TYPE` | `add --type` | 默认类型，默认 `memory` |
 | `SHELLM_FAST_MODEL` | — | `search` 传给 `llm -m` 的模型 |
+| `LLM_API_URL` | — | `search` 传给 `llm --api-url` 的端点（缺省 OpenAI） |
+| `LLM_API_KEY` | — | `search` 传给 `llm --api-key` 的 Bearer token（可省略，本地服务不发 Authorization） |
 | `VERBOSE` | `-v` | 仅 `1` 视为开启 |
 
 ---

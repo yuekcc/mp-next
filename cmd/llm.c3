@@ -28,12 +28,19 @@ const String USAGE = "llm — minimal LLM CLI (C3 replica of headlong/bin/llm, c
 	+++ "  llm [options] -M MESSAGES_JSON\n"
 	+++ "\n"
 	+++ "Options:\n"
-	+++ "  -m, --model MODEL        Model to use. Default: $SHELLM_MODEL, else\n"
-	+++ "                           gpt-5.5 when OPENAI_API_KEY is set\n"
+	+++ "  -m, --model MODEL        Model to use. Required unless --api-url is given\n"
+	+++ "                           (request then carries no model — server default)\n"
+	+++ "  --api-url URL            Chat-completions endpoint override\n"
+	+++ "                           (default: https://api.openai.com/v1/chat/completions)\n"
+	+++ "  --api-key KEY            Bearer token; optional — when omitted no\n"
+	+++ "                           Authorization header is sent (local servers)\n"
 	+++ "  -s, --system-prompt TEXT System prompt text\n"
 	+++ "  --system-prompt-file F   Read system prompt from file\n"
 	+++ "  -M, --messages JSON      Messages array JSON, e.g. [{\"role\":\"user\",\"content\":\"hi\"}]\n"
 	+++ "  --messages-file F        Read messages array JSON from file\n"
+	+++ "  --extra-body JSON        JSON object merged into the request body\n"
+	+++ "                           (keys override defaults; e.g. llama-server:\n"
+	+++ "                           '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
 	+++ "  --thinking [LEVEL]       Enable reasoning (sent as reasoning.effort).\n"
 	+++ "                           LEVEL: low/high/max; omitted when not\n"
 	+++ "                           given, leaving the effort to the server default.\n"
@@ -41,6 +48,10 @@ const String USAGE = "llm — minimal LLM CLI (C3 replica of headlong/bin/llm, c
 	+++ "                           (ReadFile, Bash, EditFile, WriteFile, Grep,\n"
 	+++ "                           Glob, ListDir, HashEditFile). Default: none\n"
 	+++ "                           (plain chat, single request).\n"
+	+++ "  --usage-file F           Write usage JSON to F (default: a temp file\n"
+	+++ "                           removed after a successful run)\n"
+	+++ "  --ledger F               Append one usage ledger line per call to F\n"
+	+++ "                           (default: ~/.headlong/usage/llm.jsonl)\n"
 	+++ "  --debug                  Debug: print request body, then stream reasoning\n"
 	+++ "                           as it arrives — both to stderr, so stdout keeps\n"
 	+++ "                           only the assistant's answer\n"
@@ -50,31 +61,18 @@ const String USAGE = "llm — minimal LLM CLI (C3 replica of headlong/bin/llm, c
 	+++ "  Only the OpenAI chat-completions endpoint is supported. Anthropic\n"
 	+++ "  messages / Gemini / adapter / OpenRouter routing are NOT implemented.\n"
 	+++ "\n"
-	+++ "Environment:\n"
-	+++ "  OPENAI_API_KEY / LLM_API_KEY  Bearer token (LLM_API_KEY wins; when neither\n"
-	+++ "                                is set no auth header is sent — local servers)\n"
-	+++ "  LLM_API_URL                   Endpoint override\n"
-	+++ "                                (default: https://api.openai.com/v1/chat/completions)\n"
-	+++ "  LLM_MODEL                     Default model (same as -m)\n"
-	+++ "  SHELLM_MODEL                  Fallback default model\n"
-	+++ "  LLM_EXTRA_BODY                JSON object merged into the request body\n"
-	+++ "                                (keys override defaults; e.g. llama-server:\n"
-	+++ "                                '{\"chat_template_kwargs\":{\"enable_thinking\":false}}')\n"
-	+++ "  LLM_PROVIDER                  Label only (ledger records); no behavior\n"
-	+++ "\n"
 	+++ "Examples:\n"
 	+++ "  llm -m gpt-5.5 \"explain quicksort\"\n"
 	+++ "  echo \"summarize this\" | llm -m gpt-4o\n"
-	+++ "  LLM_API_URL=http://localhost:11434/v1/chat/completions \\\n"
-	+++ "    llm -m qwen3:8b \"explain quicksort\"\n";
+	+++ "  llm --api-url http://localhost:11434/v1/chat/completions -m qwen3:8b \"explain quicksort\"\n";
 
 // ===========================================================================
 // agent 级 AppContext（trace 数据中心）
 // ===========================================================================
-// 贯穿整个 trace 的 CLI 侧数据中心：接口设置（env/CLI 来源的字段级值）、请求
-// 参数、消息历史、工具注册表引用与运行期接线（usage_file）。不持有 api 模块的
-// LlmOption——run_trace 调用 api 入口前现场组装（api 模块只定义数据结构、不感知
-// 配置来源，也不感知 AppContext）。
+// 贯穿整个 trace 的 CLI 侧数据中心：接口设置（纯 CLI 来源的字段级值）、请求
+// 参数、消息历史、工具注册表引用与运行期接线（usage/ledger 落盘）。不持有 api
+// 模块的 LlmOption——run_trace 调用 api 入口前现场组装（api 模块只定义数据结构、
+// 不感知配置来源，也不感知 AppContext）。
 
 struct AppContext
 {
@@ -83,13 +81,13 @@ struct AppContext
 	String api_key; // Bearer token；空则不发送 Authorization（本地服务）
 	String extra_body; // 原样 JSON 对象字符串；序列化时合并进请求体（同名覆盖）
 	bool debug; // 请求体 dump 到 stderr 等诊断（stdout 不受影响）
-	String provider_label; // provider 台账标签（CLI 写 ledger 用；api 模块不消费）
 	String model;
 	bool thinking; // --thinking（reasoning 对象开关）
 	String thinking_level; // low/high/max，空 = 服务端默认
 	List{ChatMessage} messages; // trace 消息历史（每 turn 追加 assistant/tool）
 	ToolHub* hub; // null = 无工具（纯 chat）
-	String usage_file; // usage/ledger 落盘目标（CLI 接线；空 = 关闭）
+	String usage_file; // usage 记录落盘目标（--usage-file；空 = 关闭）
+	String ledger_file; // 台账落盘目标（--ledger；空 = 关闭）
 	// ponytail: session_id/request_id 是 mini_pi 对齐留位（v1 恒空串）；升级路径
 	// = llm 接入 session 基础设施时填充（同时解锁 Task 工具注册）。
 	String session_id;
@@ -115,30 +113,8 @@ fn void warn_msg(String s)
 
 // 注：trim / trim_right / to_int / starts_with / zstr_tcopy 等均直接用 std 库
 // （std::core::string），不再手写等价函数。
-
-fn String env_str(String name)
-{
-	String? v = env::tget_var(name);
-	return v ?? "";
-}
-
-// 把 env 中的接口设置读进 AppContext 字段（env 读取属 CLI 交互层；api 模块只
-// 消费数据）。url 留空 = api 模块默认端点。
-fn void context_from_env(AppContext* actx)
-{
-	actx.url = env_str("LLM_API_URL");
-	actx.api_key = env_str("LLM_API_KEY");
-	if (actx.api_key.len == 0)
-	{
-		actx.api_key = env_str("OPENAI_API_KEY");
-	}
-	actx.extra_body = env_str("LLM_EXTRA_BODY");
-	actx.provider_label = env_str("LLM_PROVIDER");
-	if (actx.provider_label.len == 0)
-	{
-		actx.provider_label = "chat-completions";
-	}
-}
+// 配置只来自命令行开关（--api-url/--api-key/--extra-body/--usage-file/--ledger/
+// -m），无任何环境变量读取——见 docs/adr/0002-llm-cli-settings-cli-only.md。
 
 fn String now_iso_utc()
 {
@@ -174,15 +150,6 @@ fn bool stdin_is_tty()
 
 fn String temp_dir()
 {
-	String t = env_str("TEMP");
-	if (t.len == 0)
-	{
-		t = env_str("TMPDIR");
-	}
-	if (t.len > 0)
-	{
-		return t;
-	}
 	Path? td = path::temp_directory(tmem);
 	if (catch td)
 	{
@@ -239,24 +206,9 @@ fn void mkdir_p(String dir)
 	}
 }
 
-fn String basename(String p)
-{
-	usz i = p.len;
-	while (i > 0 && p[i - 1] != '/' && p[i - 1] != '\\') i--;
-	return p[i:p.len - i];
-}
-
+// 固定状态目录 ~/.headlong（HEADLONG_HOME/SHELLM_HOME 已删除；覆盖走 --ledger）。
 fn String state_home()
 {
-	String h = env_str("HEADLONG_HOME");
-	if (h.len == 0)
-	{
-		h = env_str("SHELLM_HOME");
-	}
-	if (h.len > 0)
-	{
-		return h;
-	}
 	Path? hd = path::home_directory(tmem);
 	if (catch hd)
 	{
@@ -361,18 +313,10 @@ fn void ledger_append(AppContext* actx)
 		return;
 	}
 
-	String ledger = env_str("LLM_USAGE_LEDGER");
+	String ledger = actx.ledger_file;
 	if (ledger.len == 0)
 	{
-		String idir = env_str("IDENTITY_DIR");
-		if (idir.len > 0)
-		{
-			ledger = string::tformat("%s/usage/llm.jsonl", idir);
-		}
-		else
-		{
-			ledger = string::tformat("%s/usage/llm.jsonl", state_home());
-		}
+		return;
 	}
 	usz cut = 0;
 	for (usz i = 0; i < ledger.len; i++)
@@ -390,7 +334,7 @@ fn void ledger_append(AppContext* actx)
 	// 直接用 cjson 构造台账 JSON（字符串转义交给序列化），不再手工拼串。
 	CJsonItem* entry = cjson::new_object(tmem);
 	entry.set("ts", now_iso_utc());
-	entry.set("provider", actx.provider_label);
+	entry.set("provider", "chat-completions"); // 写死（原 LLM_PROVIDER 已删）
 	entry.set("model", actx.model);
 	for (CJsonItem* m = rec.child; m != null; m = m.next)
 	{
@@ -398,28 +342,6 @@ fn void ledger_append(AppContext* actx)
 		{
 			entry.set(((ZString)m.string).str_view(), (int)m.valuedouble);
 		}
-	}
-	String identity = env_str("IDENTITY_NAME");
-	if (identity.len == 0)
-	{
-		String idir = env_str("IDENTITY_DIR");
-		if (idir.len > 0)
-		{
-			identity = basename(idir);
-		}
-	}
-	if (identity.len > 0)
-	{
-		entry.set("identity", identity);
-	}
-	String run_id = env_str("LLM_RUN_ID");
-	if (run_id.len == 0)
-	{
-		run_id = env_str("SHELLM_RUN_STEP_ID");
-	}
-	if (run_id.len > 0)
-	{
-		entry.set("run_id", run_id);
 	}
 	cjson::delete(rec);
 
@@ -441,7 +363,7 @@ fn void warn_truncated()
 	// 上限由服务端（或其默认值）决定：本 CLI 不发 max_tokens，只能提示走 extra body。
 	io::eprintfn(
 		"llm: warning: output truncated (finish_reason=length) — the output cap "
-			"was hit; raise it with LLM_EXTRA_BODY (e.g. '{\"max_tokens\":32768}')"
+			"was hit; raise it with --extra-body (e.g. '{\"max_tokens\":32768}')"
 	);
 }
 
@@ -612,7 +534,6 @@ fn void run_trace(AppContext* actx)
 	opt.api_key = actx.api_key;
 	opt.extra_body = actx.extra_body;
 	opt.debug = actx.debug;
-	opt.provider_label = actx.provider_label;
 
 	int turn = 0;
 	while (true)
@@ -699,6 +620,9 @@ fn int main(String[] args)
 	// 解析期 CLI 状态（main 局部，仅解析与装配阶段使用；运行期值在装配后经
 	// LlmOption / AppContext 传递，无模块级全局）。
 	String model = "";
+	String url = "";
+	String api_key = "";
+	String extra_body = "";
 	String system = "";
 	String messages = "";
 	String prompt = "";
@@ -707,13 +631,10 @@ fn int main(String[] args)
 	bool debug = false;
 	String tools = "";
 	String usage_file = "";
+	String ledger_file = "";
 	bool usage_file_own = false;
 
-	// 1) 环境默认值
-	model = env_str("LLM_MODEL");
-	usage_file = env_str("LLM_USAGE_FILE");
-
-	// 2) 参数解析
+	// 1) 参数解析（无环境变量读取；接口设置/usage/ledger 默认见步骤 4/5）
 	usz i = 1;
 	bool positional = false;
 	while (i < args.len)
@@ -734,6 +655,21 @@ fn int main(String[] args)
 		{
 			i = opt_value(args, i, "--model");
 			model = args[i];
+		}
+		else if (a == "--api-url")
+		{
+			i = opt_value(args, i, "--api-url");
+			url = args[i];
+		}
+		else if (a == "--api-key")
+		{
+			i = opt_value(args, i, "--api-key");
+			api_key = args[i];
+		}
+		else if (a == "--extra-body")
+		{
+			i = opt_value(args, i, "--extra-body");
+			extra_body = args[i];
 		}
 		else if (a == "-s" || a == "--system-prompt")
 		{
@@ -770,6 +706,16 @@ fn int main(String[] args)
 			i = opt_value(args, i, "--tools");
 			tools = args[i];
 		}
+		else if (a == "--usage-file")
+		{
+			i = opt_value(args, i, "--usage-file");
+			usage_file = args[i];
+		}
+		else if (a == "--ledger")
+		{
+			i = opt_value(args, i, "--ledger");
+			ledger_file = args[i];
+		}
 		else if (a == "--debug")
 		{
 			debug = true;
@@ -796,29 +742,23 @@ fn int main(String[] args)
 		die("No prompt or messages provided");
 	}
 
-	// 4) 默认模型：SHELLM_MODEL → 有 key 时 gpt-5.5 → 报错
-	if (model.len == 0)
+	// 4) 模型/端点校验：两者都没给才 die（只给 --api-url 时 model 留空，
+	//     由服务器默认模型兜底；默认端点无 model 无从谈起）。
+	if (model.len == 0 && url.len == 0)
 	{
-		String sm = env_str("SHELLM_MODEL");
-		if (sm.len > 0)
-		{
-			model = sm;
-		}
-		else if (env_str("OPENAI_API_KEY").len > 0 || env_str("LLM_API_KEY").len > 0)
-		{
-			model = "gpt-5.5";
-		}
-		else
-		{
-			die("No model specified and no API key found. Set OPENAI_API_KEY (or LLM_API_KEY), or pass -m MODEL.");
-		}
+		die("no model specified and no api endpoint given; pass -m MODEL or --api-url URL");
 	}
 
-	// 5) 私有 usage 临时文件兜底
+	// 5) usage/ledger 落盘默认值：usage 无开关走临时文件（成功后删除）；
+	//     ledger 无开关固定 ~/.headlong/usage/llm.jsonl。
 	if (usage_file.len == 0)
 	{
 		usage_file = string::tformat("%s/llm-usage-%d.tmp", temp_dir(), current_pid());
 		usage_file_own = true;
+	}
+	if (ledger_file.len == 0)
+	{
+		ledger_file = string::tformat("%s/usage/llm.jsonl", state_home());
 	}
 
 	// 6) 工具注册（--tools 显式 opt-in；init 前校验名单，未知名 die）
@@ -832,10 +772,12 @@ fn int main(String[] args)
 	}
 
 	// 8) agent 级 AppContext（trace 数据中心）+ 初始消息 + run_trace 循环。
-	//     接口设置来自 env（context_from_env）；debug 按本 CLI
-	//     场景接线。AppContext 不持有 api 类型，run_trace 里现场组装 LlmOption。
+	//     接口设置字段级赋值（纯 CLI 来源）。AppContext 不持有 api 类型，
+	//     run_trace 里现场组装 LlmOption。
 	AppContext actx;
-	context_from_env(&actx);
+	actx.url = url;
+	actx.api_key = api_key;
+	actx.extra_body = extra_body;
 	actx.debug = debug;
 	actx.model = model;
 	actx.thinking = thinking;
@@ -843,6 +785,7 @@ fn int main(String[] args)
 	actx.messages.init(tmem);
 	actx.hub = hub_ptr;
 	actx.usage_file = usage_file;
+	actx.ledger_file = ledger_file;
 	actx.session_id = "";
 	actx.request_id = "";
 	actx.config_dir = ".";

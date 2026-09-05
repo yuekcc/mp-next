@@ -166,7 +166,7 @@ fn void test_llm_req_extra_body_invalid() @test
 	bool ok = api::make_payload(tmem, &ctx, &req, &payload, &err);
 	test::eq(false, ok);
 	test::eq(0, err.http_code);
-	test::eq("LLM_EXTRA_BODY must be a JSON object", err.message);
+	test::eq("extra_body must be a JSON object", err.message);
 }
 
 // ===========================================================================

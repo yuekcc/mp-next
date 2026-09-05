@@ -61,6 +61,8 @@ struct Config
 	bool verbose; // VERBOSE
 	String mem_type; // MEM_TYPE（add 的默认类型）
 	String fast_model; // SHELLM_FAST_MODEL（search 用）
+	String api_url; // LLM_API_URL（search 拉起 llm 的 --api-url）
+	String api_key; // LLM_API_KEY（search 拉起 llm 的 --api-key）
 	ColorSet colors;
 }
 
@@ -74,7 +76,7 @@ fn void Config.init(&self)
 	load_memrc(self);
 
 	// 2) 环境变量覆盖 rc 文件
-	String[4] keys = { "MEM_DIR", "MEM_TYPE", "SHELLM_FAST_MODEL", "VERBOSE" };
+	String[6] keys = { "MEM_DIR", "MEM_TYPE", "SHELLM_FAST_MODEL", "VERBOSE", "LLM_API_URL", "LLM_API_KEY" };
 	foreach (k : keys)
 	{
 		if (try v = env::tget_var(k))
@@ -97,6 +99,14 @@ fn void apply_setting(Config* cfg, String key, String value)
 	else if (key == "SHELLM_FAST_MODEL")
 	{
 		cfg.fast_model = value.copy(mem);
+	}
+	else if (key == "LLM_API_URL")
+	{
+		cfg.api_url = value.copy(mem);
+	}
+	else if (key == "LLM_API_KEY")
+	{
+		cfg.api_key = value.copy(mem);
 	}
 	else if (key == "VERBOSE")
 	{

@@ -325,7 +325,7 @@ fn CJsonItem* message_to_json(Allocator allocator, ChatMessage* m)
 	return obj;
 }
 
-// ChatRequest → cJSON 对象树（调用方可再合并 LLM_EXTRA_BODY 等额外键后打印）
+// ChatRequest → cJSON 对象树（调用方可再合并 extra_body 等额外键后打印）
 fn CJsonItem* request_to_cjson(Allocator allocator, ChatRequest* req)
 {
 	CJsonItem* body = cjson::new_object(allocator);

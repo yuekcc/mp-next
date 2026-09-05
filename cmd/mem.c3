@@ -31,7 +31,9 @@ const String USAGE = "mem — CLI memory store\n" +++ "\n" +++ "Usage:\n"
 	+++ "  --version          Show version\n"
 	+++ "\n"
 	+++ "Environment:\n"
-	+++ "  MEM_DIR   Override memory directory (default: ./.memories)\n";
+	+++ "  MEM_DIR          Override memory directory (default: ./.memories)\n"
+	+++ "  LLM_API_URL      Endpoint passed to llm --api-url in `mem search`\n"
+	+++ "  LLM_API_KEY      Token passed to llm --api-key in `mem search`\n";
 
 const String SEARCH_PROMPT = "You are a semantic search engine for memory files. Each memory has a "
 	+++ "filename header (=== filename ===), YAML frontmatter (summary, type), and "
@@ -102,6 +104,18 @@ fn void action_search(Config* cfg, String query)
 	{
 		argv.push("-m");
 		argv.push(cfg.fast_model);
+	}
+	// llm 不读环境变量（见 docs/adr/0002）：url/key 从 mem 自身配置
+	// （.memrc / 环境变量）翻译成开关传给子进程。
+	if (cfg.api_url.len > 0)
+	{
+		argv.push("--api-url");
+		argv.push(cfg.api_url);
+	}
+	if (cfg.api_key.len > 0)
+	{
+		argv.push("--api-key");
+		argv.push(cfg.api_key);
 	}
 	argv.push("-s");
 	argv.push(SEARCH_PROMPT);

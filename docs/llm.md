@@ -44,13 +44,18 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 
 | 选项 | 说明 |
 |---|---|
-| `-m, --model MODEL` | 模型名。缺省取 `$LLM_MODEL` → `$SHELLM_MODEL` →（有 key 时）`gpt-5.5` → 报错 |
+| `-m, --model MODEL` | 模型名。未给 `-m` 且未给 `--api-url` 时报错退出；只给 `--api-url` 时请求不带 model 字段，交给服务器默认模型 |
+| `--api-url URL` | chat-completions 端点覆盖，默认 `https://api.openai.com/v1/chat/completions` |
+| `--api-key KEY` | Bearer token；省略时不发 Authorization 头（本地服务场景） |
+| `--extra-body JSON` | JSON object 合并进请求体（同名键覆盖默认值）；值不是合法 JSON object 时报错 |
 | `-s, --system-prompt TEXT` | system prompt 文本（作为 messages[0] 前置插入） |
 | `--system-prompt-file F` | 从文件读 system prompt；文件不存在报错 |
 | `-M, --messages JSON` | messages 数组 JSON；非法 JSON / 非数组 / 元素非对象都报错 |
 | `--messages-file F` | 从文件读 messages 数组 JSON |
 | `--thinking [LEVEL]` | 打开推理。LEVEL 取 `low/medium/high/xhigh`；**只有后一个参数正好是这四个词之一时才被当作 LEVEL**，否则视为普通 prompt |
 | `--tools LIST` | 逗号分隔的工具名单，打开 agent loop。缺省不发 `tools` 字段（单次请求）。详见「agent loop」 |
+| `--usage-file F` | usage 记录写入路径；缺省临时文件，成功后删除 |
+| `--ledger F` | usage 台账路径；缺省 `~/.headlong/usage/llm.jsonl`，父目录自动创建 |
 | `--debug` | 请求体、reasoning 增量、工具调用过程打到 stderr（stdout 仍只有答案） |
 | `-h, --help` | 打印帮助 |
 
@@ -59,18 +64,19 @@ llm [options] -M MESSAGES_JSON    # 完整 messages 数组
 **恒为流式**：请求总是 `stream:true`，响应按 SSE 打字机输出，没有 `--stream` /
 `--no-stream` / `--raw` 之类的开关。
 
-`--help` 是精简版，未列全环境变量（如 `LLM_MODEL`、`LLM_USAGE_*`），以本文为准。
+本 CLI **不读任何环境变量**，配置全部走命令行开关（见
+[docs/adr/0002-llm-cli-settings-cli-only.md](adr/0002-llm-cli-settings-cli-only.md)）。
 
 ### 输出上限（max_tokens）
 
 本 CLI **不发送** `max_tokens` / `max_completion_tokens`，输出上限由服务端及其默认值决定。
-需要上限时用 `LLM_EXTRA_BODY` 显式加（键名按端点要求选）：
+需要上限时用 `--extra-body` 显式加（键名按端点要求选）：
 
 ```bash
-LLM_EXTRA_BODY='{"max_tokens":4096}' llm -m any "hi"
+llm --extra-body '{"max_tokens":4096}' -m any "hi"
 ```
 
-`finish_reason == "length"`（输出被截断）时打印 warning，提示经 `LLM_EXTRA_BODY` 上调。
+`finish_reason == "length"`（输出被截断）时打印 warning，提示经 `--extra-body` 上调。
 
 ### 推理（--thinking）
 
@@ -86,14 +92,14 @@ LEVEL 只在恰好匹配四个合法词时才被消费，所以 `llm --thinking 
 当成强度（它仍是 prompt）。`none` / `off` 不在白名单里，无法通过 `--thinking` 表达
 "显式关闭"。
 
-**要真正关掉思考，只能走服务端私有参数**（`LLM_EXTRA_BODY`）：本 CLI 不发送
+**要真正关掉思考，只能走服务端私有参数**（`--extra-body`）：本 CLI 不发送
 `reasoning` 时，llama-server / vLLM 上的 Qwen3.5、DeepSeek 等默认就是开思考的，
 此时推理 token 会占用服务端的输出上限。
 
 ```bash
-LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "hi"
+llm --extra-body '{"chat_template_kwargs":{"enable_thinking":false}}' -m any "hi"
 # 部分端点也接受顶层 reasoning_effort:
-LLM_EXTRA_BODY='{"reasoning_effort":"none"}' llm -m any "hi"
+llm --extra-body '{"reasoning_effort":"none"}' -m any "hi"
 ```
 
 另注：`--thinking` 发的是 Responses API 风格的 `reasoning{effort,summary}` 对象，
@@ -151,7 +157,7 @@ llm --tools ReadFile,Grep -m gpt-5 "这个项目里 llm 的错误前缀是怎么
 - `stream:true` 与 `stream_options.include_usage:true` 恒发送，不可关；所以服务端必须支持
   chat-completions 流式，且 usage 随流回传。
 - **不发送 `max_tokens` / `max_completion_tokens`**（输出上限交给服务端默认；需要时走
-  `LLM_EXTRA_BODY`）。
+  `--extra-body`）。
 - `reasoning` 只在 `--thinking` 时出现；`effort` 空则省略，`summary` 恒为 `auto`。
 - `--tools` 非空时请求体才带 `tools` 数组。
 
@@ -177,44 +183,37 @@ llm --debug -M '[{"role":"assistant","content":null,"tool_calls":[{"id":"c1","ty
 
 `-s` / `--system-prompt-file` 的 system 消息始终插在 messages[0]，可与 `-M` 共存。
 
-### LLM_EXTRA_BODY
+### --extra-body（合并额外请求体键）
 
 JSON object，合并进请求体（同名键覆盖默认值）。值不是合法 JSON object 时报错退出。
 
 ```bash
-LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false},"temperature":0.2}' \
-  llm -m any "explain quicksort"
+llm --extra-body '{"chat_template_kwargs":{"enable_thinking":false},"temperature":0.2}' \
+  -m any "explain quicksort"
 ```
 
 llama-server 关闭思考的典型用法（Qwen3.5 默认开思考会把 reasoning token 吃满服务端输出上限，
 导致正文为空）：
 
 ```bash
-LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "hi"
+llm --extra-body '{"chat_template_kwargs":{"enable_thinking":false}}' -m any "hi"
 ```
 
 ---
 
-## 环境变量
+## 配置面
 
-配置只读真实环境，没有 `.env` / rc 文件。
+**本 CLI 不读任何环境变量**，也没有 `.env` / rc 文件——接口设置全部由命令行开关给出
+（`-m` / `--api-url` / `--api-key` / `--extra-body` / `--usage-file` / `--ledger`），
+见 [docs/adr/0002-llm-cli-settings-cli-only.md](adr/0002-llm-cli-settings-cli-only.md)。
+从 shell 或脚本调用时，把原环境变量写法换成开关即可；`mem search` 会从自身配置
+（`.memrc` / 环境变量 `LLM_API_URL` / `LLM_API_KEY`）自动翻译成开关再拉起 `llm`
+（见 docs/mem.md）。
 
-| 变量 | 说明 |
-|---|---|
-| `LLM_API_KEY` / `OPENAI_API_KEY` | Bearer token。**`LLM_API_KEY` 优先**。两者都没有时不发 Authorization 头（本地服务场景） |
-| `LLM_API_URL` | 端点覆盖，默认 `https://api.openai.com/v1/chat/completions` |
-| `LLM_MODEL` | 默认模型（等价于 `-m`） |
-| `SHELLM_MODEL` | 兜底默认模型 |
-| `LLM_EXTRA_BODY` | JSON object，合并进请求体（同名键覆盖默认值） |
-| `LLM_USAGE_FILE` | usage 记录写入路径；未设时用临时文件，成功后删除 |
-| `LLM_USAGE_LEDGER` | usage 台账路径，默认 `$IDENTITY_DIR/usage/llm.jsonl`，无 `IDENTITY_DIR` 时 `$HOME/.headlong/usage/llm.jsonl`；父目录自动创建 |
-| `LLM_PROVIDER` | 仅作标签写入 ledger（`provider` 字段），默认 `chat-completions`，不影响行为 |
-| `LLM_RUN_ID` / `SHELLM_RUN_STEP_ID` | 写入 ledger 的 run_id（前者优先） |
-| `IDENTITY_DIR` / `IDENTITY_NAME` | 写 ledger 的 identity；`IDENTITY_NAME` 缺省取 `IDENTITY_DIR` 的 basename |
-| `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong`（影响 ledger 默认路径） |
-| `LLM_MOCK_PORT` | 仅 `scripts/mock_llm.py` 使用，默认 8123 |
+`scripts/mock_llm.py` 服务端口仍可用环境变量 `LLM_MOCK_PORT` 覆盖（默认 8123）——
+那是 mock 服务器自己的配置，与 llm 无关。
 
-传输/重试策略是内置常量，**不提供环境变量覆盖**：建连超时 10s、单次尝试硬上限 600s、
+传输/重试策略是内置常量，**不提供任何覆盖**：建连超时 10s、单次尝试硬上限 600s、
 低速中止 100 B/s 持续 60s、瞬时失败重试 2 次（即最多 3 次尝试）、退避基数 1s
 （第 n 次等待 `n` 秒）。
 
@@ -227,17 +226,18 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 **stderr**：`--debug` 下打印请求体（`---` 包裹）、reasoning 增量与工具调用过程；
 reasoning 兼容标准字段 `delta.reasoning`，回退 DeepSeek 私有 `delta.reasoning_content`。
 
-**usage 文件**（`LLM_USAGE_FILE`）：成功输出后写入单行 JSON，缺省字段省略——
+**usage 文件**（`--usage-file`，缺省临时文件）：成功输出后写入单行 JSON，缺省字段省略——
 
 ```json
 {"in_tok":37,"out_tok":3,"think_tok":0}
 ```
 
-**usage 台账**：每次成功调用追加一行 JSONL（ts / provider / model / usage 字段 / identity /
-run_id）——agent loop 每轮各写一行。
+**usage 台账**：每次成功调用追加一行 JSONL（ts / provider / model / usage 字段）——
+agent loop 每轮各写一行。provider 固定 `chat-completions`（原 `LLM_PROVIDER` 标签与
+identity/run_id 元数据已随环境变量删除）。
 
 ```json
-{"ts":"2026-09-04T16:00:15Z","provider":"openrouter","model":"any","in_tok":37,"out_tok":3,"think_tok":0,"identity":"agent-7","run_id":"r1"}
+{"ts":"2026-09-04T16:00:15Z","provider":"chat-completions","model":"any","in_tok":37,"out_tok":3,"think_tok":0}
 ```
 
 两者都要求 usage 帧非空；usage 文件写失败会静默跳过。临时 usage 文件**仅在成功路径删除**，
@@ -258,7 +258,7 @@ run_id）——agent loop 每轮各写一行。
 | 已输出任何内容后失败 | 直接终止，**不再重试**（避免重复尾巴） |
 | HTTP 2xx 但一个 `data:` 事件都没发出 | 视为失败：先从错误缓冲里解析 `error.message`（200+error），否则报空流；不重试 |
 
-- 重试次数固定 2（最多 3 次尝试），退避基数 1s，无环境变量开关。
+- 重试次数固定 2（最多 3 次尝试），退避基数 1s，无外部开关。
 - 4xx 立即失败并展示 API 返回的 error message，不再空等重试。实测：
 
   ```
@@ -271,7 +271,7 @@ run_id）——agent loop 每轮各写一行。
   或非 JSON 时（如无响应体的 4xx/5xx）直接回退 `HTTP <code>`。
 - 错误信息只从**第一个 `data:` 事件之前**的内容里累积，之后的正文不再当错误看待。
 - `finish_reason == "length"` 时打印截断 warning（输出上限由服务端决定，需上调走
-  `LLM_EXTRA_BODY`）。
+  `--extra-body`）。
 - 错误输出前缀 `llm: error:` / `llm: warning:`，退出码 1。
 
 ---
@@ -288,16 +288,16 @@ llm -s "You are a terse assistant" -m gpt-4o "hi"
 llm --tools ReadFile,Grep,Glob -m gpt-5 "找出 llm 的错误前缀在哪拼装"
 
 # 本地 llama-server
-LLM_API_URL=http://127.0.0.1:8001/v1/chat/completions llm -m any "hello"
+llm --api-url http://127.0.0.1:8001/v1/chat/completions -m any "hello"
 
 # 本地 mock server（无真实服务时的冒烟验证）
 python scripts/mock_llm.py                    # 默认 http://127.0.0.1:8123
-LLM_API_URL=http://127.0.0.1:8123/v1/chat/completions LLM_MODEL=any \
-  llm --debug --thinking "think 1+1"
+llm --api-url http://127.0.0.1:8123/v1/chat/completions -m any \
+  --debug --thinking "think 1+1"
 
 # OpenRouter
-LLM_API_URL=https://openrouter.ai/api/v1/chat/completions \
-  llm -m openai/gpt-4o "hi"
+llm --api-url https://openrouter.ai/api/v1/chat/completions \
+  -m openai/gpt-4o "hi"
 
 # 完整 messages 数组
 llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"again"}]'
@@ -311,7 +311,7 @@ llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{
 | `echo` | 回显最后一条 user 消息（验证 prompt / `-s` 拼接） |
 | `think` | 先 reasoning 后 content；请求带 `reasoning` 时用标准 `delta.reasoning`，否则走 `reasoning_content` 回退分支 |
 | `length` | `finish_reason="length"` 截断警告 |
-| `dump` | 把收到的请求体原样回显（验证 payload：透传 / reasoning / `LLM_EXTRA_BODY`） |
+| `dump` | 把收到的请求体原样回显（验证 payload：透传 / reasoning / `--extra-body`） |
 | `err400` | HTTP 400 + `{"error":{...}}`（4xx 立即失败、不重试） |
 | `embed` | HTTP 200 但响应体是 `{"error":{...}}`（200+error） |
 
@@ -328,7 +328,7 @@ llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{
 - 无多模态输入、无 attachments。但 `-M` 里携带的 assistant `tool_calls` / `tool` 消息
   会原样透传，可用于回放多轮对话。
 - 思考型模型默认把 reasoning 计入 token 上限，且只在 `--debug` 下可见；要彻底关思考用
-  `LLM_EXTRA_BODY`（如 llama-server `{"chat_template_kwargs":{"enable_thinking":false}}`）。
+  `--extra-body`（如 llama-server `{"chat_template_kwargs":{"enable_thinking":false}}`）。
 - 重试只看瞬时错误：仅传输层错误与 HTTP 429/5xx 且未输出内容时重试，4xx 等确定性错误
   立即失败；重试与超时策略都是内置常量，无外部开关。
 - 非 2xx 且无 `error.message` 时只报 `HTTP <code>`。
