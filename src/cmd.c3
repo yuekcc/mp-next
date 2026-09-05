@@ -52,7 +52,9 @@ fn bool kill_current_child()
 		{
 			// 击杀已发出；join 偶发失败（进程句柄被并发关闭/复用）也绝不能在这里
 			// panic——L2 中断跑在 UI 线程，panic 会拖垮整个 agent。
-			if (try _exit_code = p.join()) {}
+			if (try _exit_code = p.join())
+			{
+			}
 			(void)p.destroy();
 		}
 	$else

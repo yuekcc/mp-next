@@ -1,5 +1,5 @@
 // 通用小工具集合（module util）。
-//
+// 
 // mp-next 把 mini_pi 的 src/util/*.c3 摊平成单文件（与 src/cmd.c3 同一约定：
 // 模块名即文件名，不再有 util::* 子模块）。这里只放被 src/tool 实际引用的符号：
 // 行尾归一化 + hashline 锚点管线、时间戳 id。
@@ -16,7 +16,7 @@ import libc;
 
 // FNV-1a 32 位哈希参数
 const uint FNV_OFFSET_32 = 0x811c9dc5; // 2166136261
-const uint FNV_PRIME_32  = 0x01000193; // 16777619
+const uint FNV_PRIME_32 = 0x01000193; // 16777619
 
 // 锚点字母表（对齐 oh-my-pi）：最低字节拆成两个 4-bit nibble 后映射
 const String HASH_ALPHABET = "ZPMQVRWSNKTXJBYH";
@@ -149,8 +149,7 @@ fn String line_hash(Allocator allocator, String line, usz line_num)
 		trimmed = trimmed[:trimmed.len - 1];
 	}
 	// 去掉行尾空白（空格、tab）
-	while (trimmed.len > 0 &&
-	       (trimmed[trimmed.len - 1] == ' ' || trimmed[trimmed.len - 1] == '\t'))
+	while (trimmed.len > 0 && (trimmed[trimmed.len - 1] == ' ' || trimmed[trimmed.len - 1] == '\t'))
 	{
 		trimmed = trimmed[:trimmed.len - 1];
 	}

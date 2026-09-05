@@ -79,7 +79,10 @@ fn String http_attempt(LlmOption* ctx, String payload, int* http_code, curl::Cur
 	if (res != curl::CurlResult.OK)
 	{
 		String detail = ((ZString)&errbuf[0]).str_view();
-		if (detail.len == 0) { detail = ((ZString)curl::easy_strerror(res)).str_view(); }
+		if (detail.len == 0)
+		{
+			detail = ((ZString)curl::easy_strerror(res)).str_view();
+		}
 		return string::tformat("curl error: %s", detail);
 	}
 	return "";

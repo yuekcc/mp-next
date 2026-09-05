@@ -32,9 +32,9 @@ macro void debug(Config* cfg, String $format, args...)
 
 struct ColorSet
 {
-	String id;    // 粗体黄色，hex id
+	String id; // 粗体黄色，hex id
 	String ctype; // 青色，type 标签
-	String dim;   // 暗色，路径
+	String dim; // 暗色，路径
 	String reset;
 }
 
@@ -57,9 +57,9 @@ fn ColorSet init_colors()
 
 struct Config
 {
-	String dir;        // MEM_DIR（默认 ./.memories）
-	bool verbose;      // VERBOSE
-	String mem_type;   // MEM_TYPE（add 的默认类型）
+	String dir; // MEM_DIR（默认 ./.memories）
+	bool verbose; // VERBOSE
+	String mem_type; // MEM_TYPE（add 的默认类型）
 	String fast_model; // SHELLM_FAST_MODEL（search 用）
 	ColorSet colors;
 }
@@ -161,7 +161,11 @@ fn sz cmp_strings(String a, String b)
 
 fn String[] tail_slice(String[] s, usz from)
 {
-	if (from >= s.len) { String[] e; return e; }
+	if (from >= s.len)
+	{
+		String[] e;
+		return e;
+	}
 	return s[from:s.len - from];
 }
 
@@ -208,8 +212,8 @@ fn String first_line_cut(String text, sz max_chars)
 
 struct NameParts
 {
-	String ts;   // 2025-01-01-12-00-00
-	String id;   // 8 位 hex（旧格式为空）
+	String ts; // 2025-01-01-12-00-00
+	String id; // 8 位 hex（旧格式为空）
 	String slug;
 }
 
@@ -427,16 +431,30 @@ fn void path_mkdir(String dir)
 fn String now_filename_ts()
 {
 	TzDateTime t = now_local();
-	return string::tformat("%04d-%02d-%02d-%02d-%02d-%02d",
-		t.year, (int)t.month + 1, (int)t.day, (int)t.hour, (int)t.min, (int)t.sec);
+	return string::tformat(
+		"%04d-%02d-%02d-%02d-%02d-%02d",
+		t.year,
+		(int)t.month + 1,
+		(int)t.day,
+		(int)t.hour,
+		(int)t.min,
+		(int)t.sec
+	);
 }
 
 // "YYYY-MM-DD HH:MM:SS"（frontmatter created/updated 用）
 fn String now_created_ts()
 {
 	TzDateTime t = now_local();
-	return string::tformat("%04d-%02d-%02d %02d:%02d:%02d",
-		t.year, (int)t.month + 1, (int)t.day, (int)t.hour, (int)t.min, (int)t.sec);
+	return string::tformat(
+		"%04d-%02d-%02d %02d:%02d:%02d",
+		t.year,
+		(int)t.month + 1,
+		(int)t.day,
+		(int)t.hour,
+		(int)t.min,
+		(int)t.sec
+	);
 }
 
 // 8 位小写 hex 随机 id（对应 head -c4 /dev/urandom）。
@@ -449,8 +467,7 @@ fn String random_hex8()
 		buf[i] = HEXDIGITS[random::rand(16)];
 	}
 	// 注意：不能返回栈数组的切片视图（悬空），用 tformat 落到 tmem。
-	return string::tformat("%c%c%c%c%c%c%c%c",
-		buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+	return string::tformat("%c%c%c%c%c%c%c%c", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
 }
 
 // ===========================================================================

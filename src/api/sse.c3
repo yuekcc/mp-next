@@ -23,16 +23,16 @@ struct ToolAcc
 struct StreamRecv
 {
 	// 分帧状态（scratch）
-	bool saw_data;    // 是否已见过 data: 事件（首个 data 之前的非 data 行进 err_buf）
-	bool emitted;     // 是否已输出过 delta.content 或任一 tool_call 增量（重试判定与成功判定依据）
-	DString pending;  // 未分帧的原始字节缓冲
-	DString err_buf;  // 首个 data 事件前的非 data 行（HTTP/API 错误体）
+	bool saw_data; // 是否已见过 data: 事件（首个 data 之前的非 data 行进 err_buf）
+	bool emitted; // 是否已输出过 delta.content 或任一 tool_call 增量（重试判定与成功判定依据）
+	DString pending; // 未分帧的原始字节缓冲
+	DString err_buf; // 首个 data 事件前的非 data 行（HTTP/API 错误体）
 	// 聚合输出（string 持久化到调用方 allocator）
 	Allocator allocator;
-	Usage usage;       // 跨帧合并；缺省字段保持 -1
-	bool has_usage;    // 任一帧带 usage
+	Usage usage; // 跨帧合并；缺省字段保持 -1
+	bool has_usage; // 任一帧带 usage
 	String finish_reason; // 最后一个非空 finish_reason（arena 拷贝）
-	DString acc_content;  // choices[0].content 累积
+	DString acc_content; // choices[0].content 累积
 	DString acc_reasoning; // 顶层 reasoning 累积
 	List{ToolAcc} acc_tools; // delta.tool_calls 按 index 对位聚合
 	// 回调
@@ -62,7 +62,10 @@ fn usz sse_write_cb(char* buffer, usz size, usz nitems, void* userdata)
 {
 	StreamRecv* st = (StreamRecv*)userdata;
 	usz len = size * nitems;
-	for (usz i = 0; i < len; i++) { st.pending.append_char(buffer[i]); }
+	for (usz i = 0; i < len; i++)
+	{
+		st.pending.append_char(buffer[i]);
+	}
 	pump_stream(st);
 	return len;
 }
@@ -77,7 +80,7 @@ fn void pump_stream(StreamRecv* st)
 		if (view[i] == '\n')
 		{
 			// CRLF：行尾 \r 一并剥掉（SSE 事件行按 \n 分割）
-			sse_handle_line(st, view[consumed : i - consumed].trim_right("\r"));
+			sse_handle_line(st, view[consumed:i - consumed].trim_right("\r"));
 			consumed = i + 1;
 		}
 	}
@@ -86,7 +89,7 @@ fn void pump_stream(StreamRecv* st)
 		// rest 是 pending 自身缓冲的视图：clear+append 会自我覆盖/悬垂，
 		// 必须先拷进新 DString 再整体替换。
 		DString np = dstring::new(tmem);
-		np.append(view[consumed : view.len - consumed]);
+		np.append(view[consumed:view.len - consumed]);
 		st.pending = np;
 	}
 }
@@ -103,15 +106,24 @@ fn void sse_handle_line(StreamRecv* st, String line)
 		return;
 	}
 	st.saw_data = true;
-	String json = line[6 : line.len - 6];
-	if (json == "[DONE]") { return; }
+	String json = line[6:line.len - 6];
+	if (json == "[DONE]")
+	{
+		return;
+	}
 
 	ChatStreamChunk? chunk_r = parse_stream_chunk(tmem, json);
-	if (catch chunk_r) { return; }
+	if (catch chunk_r)
+	{
+		return;
+	}
 	ChatStreamChunk chunk = chunk_r;
 
 	// 先回调、再聚合（D1/D5 语义）
-	if (st.cb != null) { st.cb(&chunk, st.cb_ud); }
+	if (st.cb != null)
+	{
+		st.cb(&chunk, st.cb_ud);
+	}
 	if (chunk.delta_content.len > 0)
 	{
 		st.emitted = true;
@@ -128,9 +140,18 @@ fn void sse_handle_line(StreamRecv* st, String line)
 		// index 缺省（负值）时并入最后一个槽：部分 provider 不发 index，
 		// 单调用场景下碎片应续接而非新开槽位。
 		sz idx;
-		if (d.index >= 0) { idx = (sz)d.index; }
-		else if (st.acc_tools.len() > 0) { idx = st.acc_tools.len() - 1; }
-		else { idx = 0; }
+		if (d.index >= 0)
+		{
+			idx = (sz)d.index;
+		}
+		else if (st.acc_tools.len() > 0)
+		{
+			idx = st.acc_tools.len() - 1;
+		}
+		else
+		{
+			idx = 0;
+		}
 		while (st.acc_tools.len() <= idx)
 		{
 			ToolAcc slot;
@@ -140,9 +161,18 @@ fn void sse_handle_line(StreamRecv* st, String line)
 			st.acc_tools.push(slot);
 		}
 		ToolAcc* t = st.acc_tools.get_ref(idx);
-		if (d.id.len > 0) { t.id = d.id.copy(st.allocator); }
-		if (d.name.len > 0) { t.name.append(d.name); }
-		if (d.arguments.len > 0) { t.args.append(d.arguments); }
+		if (d.id.len > 0)
+		{
+			t.id = d.id.copy(st.allocator);
+		}
+		if (d.name.len > 0)
+		{
+			t.name.append(d.name);
+		}
+		if (d.arguments.len > 0)
+		{
+			t.args.append(d.arguments);
+		}
 		st.emitted = true;
 	}
 	if (chunk.finish_reason.len > 0)
@@ -153,9 +183,18 @@ fn void sse_handle_line(StreamRecv* st, String line)
 	{
 		st.has_usage = true;
 		// 缺省 -1：保持旧值（usage 可能跨帧下发，每帧只带部分计数）
-		if (chunk.usage.prompt_tokens >= 0) { st.usage.prompt_tokens = chunk.usage.prompt_tokens; }
-		if (chunk.usage.completion_tokens >= 0) { st.usage.completion_tokens = chunk.usage.completion_tokens; }
-		if (chunk.usage.reasoning_tokens >= 0) { st.usage.reasoning_tokens = chunk.usage.reasoning_tokens; }
+		if (chunk.usage.prompt_tokens >= 0)
+		{
+			st.usage.prompt_tokens = chunk.usage.prompt_tokens;
+		}
+		if (chunk.usage.completion_tokens >= 0)
+		{
+			st.usage.completion_tokens = chunk.usage.completion_tokens;
+		}
+		if (chunk.usage.reasoning_tokens >= 0)
+		{
+			st.usage.reasoning_tokens = chunk.usage.reasoning_tokens;
+		}
 	}
 }
 

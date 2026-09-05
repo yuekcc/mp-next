@@ -7,7 +7,7 @@ import std::time::datetime;
 import std::thread;
 
 // 分级别日志（Logger 对象化，arch-next-spec 决策 5）。
-//
+// 
 // 两级 sink：
 // - 文件 sink：任意线程可写，内部 mutex 保护（单次 fprintf + flush，保证行完整、
 //   无交错字节）。
@@ -15,17 +15,17 @@ import std::thread;
 //   stderr；不带颜色（颜色是 ui 层的职责，与 NO_COLOR 解耦）。非 UI 线程的日志经
 //   console_sink 回调转发（main 启动时注册，实现为向 UI 事件通道投递 LogEvent），
 //   由主线程统一打印，保证不交错。
-//
+// 
 // 文件格式："[YYYY-MM-DD HH:MM:SS] [LEVEL] 消息"，纯文本，无 ANSI 颜色码。
-//
+// 
 // g_default：main 启动早期用 set_default() 登记的默认实例指针——只写一次（先于任何
 // 线程创建），此后各线程只读，供 tool/api 等无 AppContext 引用的模块使用
 // log::info/warn/error/debug 宏。AppContext.logger 指向同一实例。
 
 enum LogLevel
 {
-	INFO,  // stdout
-	WARN,  // stderr
+	INFO, // stdout
+	WARN, // stderr
 	ERROR, // stderr
 	DEBUG, // stderr
 }
@@ -33,7 +33,7 @@ enum LogLevel
 // 非主线程日志的控制台转发负载：text 已格式化完整行（含级别前缀），所有权移交 sink。
 struct LogLine
 {
-	String text;      // heap（sink 负责释放）
+	String text; // heap（sink 负责释放）
 	bool to_stderr;
 }
 
@@ -41,10 +41,10 @@ alias ConsoleSinkFn = fn void(void* ctx, LogLine line);
 
 struct Logger
 {
-	File log_file;      // 文件 sink（追加模式；file_open=false 表示未就绪）
+	File log_file; // 文件 sink（追加模式；file_open=false 表示未就绪）
 	bool file_open;
 	bool debug_enabled; // debug 级别过滤开关（受 --debug 控制）
-	Mutex mu;           // 文件 sink 互斥（任意线程写）
+	Mutex mu; // 文件 sink 互斥（任意线程写）
 	Thread main_thread; // 主线程 ID（控制台直接打印判定）
 	ConsoleSinkFn console_sink; // 非主线程控制台转发（null = 直接打印兜底）
 	void* console_sink_ctx;

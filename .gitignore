@@ -2,3 +2,4 @@
 /.memories
 /.workbuddy
 /lib/**/build
+/task_store

@@ -6,41 +6,37 @@ import std::io, std::io::file, std::os::process, std::collections::list, std::so
 import memstore;
 import util;
 
-const String USAGE =
-    "mem — CLI memory store\n"
-+++ "\n"
-+++ "Usage:\n"
-+++ "  mem add [--type TYPE] <text>   Add a memory (or pipe text via stdin)\n"
-+++ "  mem search <query>             Semantic search via shellm\n"
-+++ "  mem list [options] [N]         List memories (last N if given)\n"
-+++ "  mem types                      List memory types with counts\n"
-+++ "  mem show <id>                  Show a memory's full contents\n"
-+++ "  mem forget <id>                Delete a memory by hex ID\n"
-+++ "  mem edit <id> [--slug SLUG] <text>  Update body (or pipe via stdin)\n"
-+++ "\n"
-+++ "List options:\n"
-+++ "  -s, --short        Concise one-line-per-memory view\n"
-+++ "  --type TYPE        Filter by type (e.g. --type fact)\n"
-+++ "  --before DATE      Show memories on or before DATE (YYYY-MM-DD)\n"
-+++ "  --after DATE       Show memories on or after DATE (YYYY-MM-DD)\n"
-+++ "\n"
-+++ "Types:\n"
-+++ "  todo, objective, value, belief, fact, preference, note (default: memory)\n"
-+++ "\n"
-+++ "Options:\n"
-+++ "  --dir DIR          Override memory directory (default: ./.memories)\n"
-+++ "  -v, --verbose      Verbose/debug mode\n"
-+++ "  -h, --help         Show help\n"
-+++ "  --version          Show version\n"
-+++ "\n"
-+++ "Environment:\n"
-+++ "  MEM_DIR   Override memory directory (default: ./.memories)\n";
+const String USAGE = "mem — CLI memory store\n" +++ "\n" +++ "Usage:\n"
+	+++ "  mem add [--type TYPE] <text>   Add a memory (or pipe text via stdin)\n"
+	+++ "  mem search <query>             Semantic search via shellm\n"
+	+++ "  mem list [options] [N]         List memories (last N if given)\n"
+	+++ "  mem types                      List memory types with counts\n"
+	+++ "  mem show <id>                  Show a memory's full contents\n"
+	+++ "  mem forget <id>                Delete a memory by hex ID\n"
+	+++ "  mem edit <id> [--slug SLUG] <text>  Update body (or pipe via stdin)\n"
+	+++ "\n"
+	+++ "List options:\n"
+	+++ "  -s, --short        Concise one-line-per-memory view\n"
+	+++ "  --type TYPE        Filter by type (e.g. --type fact)\n"
+	+++ "  --before DATE      Show memories on or before DATE (YYYY-MM-DD)\n"
+	+++ "  --after DATE       Show memories on or after DATE (YYYY-MM-DD)\n"
+	+++ "\n"
+	+++ "Types:\n"
+	+++ "  todo, objective, value, belief, fact, preference, note (default: memory)\n"
+	+++ "\n"
+	+++ "Options:\n"
+	+++ "  --dir DIR          Override memory directory (default: ./.memories)\n"
+	+++ "  -v, --verbose      Verbose/debug mode\n"
+	+++ "  -h, --help         Show help\n"
+	+++ "  --version          Show version\n"
+	+++ "\n"
+	+++ "Environment:\n"
+	+++ "  MEM_DIR   Override memory directory (default: ./.memories)\n";
 
-const String SEARCH_PROMPT =
-    "You are a semantic search engine for memory files. Each memory has a "
-+++ "filename header (=== filename ===), YAML frontmatter (summary, type), and "
-+++ "a body. Return ONLY the filenames and summaries of semantically matching "
-+++ "memories, one per line. If nothing matches, say 'No matches found.'";
+const String SEARCH_PROMPT = "You are a semantic search engine for memory files. Each memory has a "
+	+++ "filename header (=== filename ===), YAML frontmatter (summary, type), and "
+	+++ "a body. Return ONLY the filenames and summaries of semantically matching "
+	+++ "memories, one per line. If nothing matches, say 'No matches found.'";
 
 // ===========================================================================
 // add
@@ -60,8 +56,14 @@ fn void action_add(Config* cfg, String text)
 	String created = memstore::now_created_ts();
 
 	DString body = dstring::new(tmem);
-	body.appendf("---\nid: %s\nsummary: %s\ntype: %s\ncreated: %s\n---\n\n%s\n",
-		hex, summary, cfg.mem_type, created, text);
+	body.appendf(
+		"---\nid: %s\nsummary: %s\ntype: %s\ncreated: %s\n---\n\n%s\n",
+		hex,
+		summary,
+		cfg.mem_type,
+		created,
+		text
+	);
 	String path = string::format(mem, "%s/%s.md", cfg.dir, filename);
 	file::save(path, body.str_view())!!;
 
@@ -115,8 +117,7 @@ fn void action_search(Config* cfg, String query)
 	defer (void)p.destroy();
 
 	// 语料经 stdin 传入，避免命令行长度限制；写完即关 stdin 触发 EOF。
-	(void)p.write_stdin(string::tformat("Search these memories for: %s\n\n%s",
-		query, corpus.str_view()));
+	(void)p.write_stdin(string::tformat("Search these memories for: %s\n\n%s", query, corpus.str_view()));
 	util::close_stdin(&p);
 
 	@pool()
@@ -152,8 +153,7 @@ fn void print_list_short(String display_ts, NameParts np, String mtype, String s
 	// bash ${id:---------}：有 id 取末 8 位，无 id 显示 8 个 '-'
 	String short_id = "--------";
 	if (np.id.len > 0) short_id = memstore::mid_of(np.id, np.id.len > 8 ? np.id.len - 8 : 0, 8);
-	io::printfn("%s  %s  %-12s %s", display_ts, short_id,
-		string::tformat("[%s]", mtype), summary);
+	io::printfn("%s  %s  %-12s %s", display_ts, short_id, string::tformat("[%s]", mtype), summary);
 }
 
 fn void print_list_verbose(Config* cfg, String file, String display_ts, NameParts np, String mtype)
@@ -167,8 +167,7 @@ fn void print_list_verbose(Config* cfg, String file, String display_ts, NamePart
 	{
 		id_display = string::tformat("%s--------%s", cfg.colors.dim, cfg.colors.reset);
 	}
-	io::printfn("%s  %s  %s[%s]%s", id_display, display_ts,
-		cfg.colors.ctype, mtype, cfg.colors.reset);
+	io::printfn("%s  %s  %s[%s]%s", id_display, display_ts, cfg.colors.ctype, mtype, cfg.colors.reset);
 	String summary = "";
 	if (try s = memstore::frontmatter_field(file, "summary")) summary = s;
 	if (summary.len > 0) io::printfn("    %s", summary);
@@ -245,8 +244,12 @@ fn void action_list(Config* cfg, String[] args)
 		if (filter_before.len > 0 && memstore::str_gt(file_date, filter_before)) continue;
 		if (filter_after.len > 0 && memstore::str_gt(filter_after, file_date)) continue;
 
-		String display_ts = string::tformat("%s %s:%s",
-			memstore::cut_to(np.ts, 10), memstore::mid_of(np.ts, 11, 2), memstore::mid_of(np.ts, 14, 2));
+		String display_ts = string::tformat(
+			"%s %s:%s",
+			memstore::cut_to(np.ts, 10),
+			memstore::mid_of(np.ts, 11, 2),
+			memstore::mid_of(np.ts, 14, 2)
+		);
 
 		if (short_mode)
 		{
@@ -419,12 +422,10 @@ fn void action_edit(Config* cfg, String name, String[] args)
 	// 文件名 slug 跟随新正文更新（--slug 优先；经 slugify 清洗防止换行/路径符）。
 	String base = basename_noext(file);
 	NameParts np = memstore::parse_filename(base);
-	String new_slug = (slug_override.len > 0) ? memstore::slugify(mem, slug_override)
-	                                          : memstore::slugify(mem, text);
+	String new_slug = (slug_override.len > 0) ? memstore::slugify(mem, slug_override) : memstore::slugify(mem, text);
 	if (new_slug.len > 0 && new_slug != np.slug)
 	{
-		String new_file = string::format(mem, "%s/%s_%s_%s.md",
-			cfg.dir, np.ts, np.id, new_slug);
+		String new_file = string::format(mem, "%s/%s_%s_%s.md", cfg.dir, np.ts, np.id, new_slug);
 		if (libc::rename(file.zstr_copy(tmem), new_file.zstr_copy(tmem)) != 0)
 		{
 			memstore::die("rename failed: %s -> %s", file, new_file);

@@ -11,7 +11,7 @@ import cjson;
 faultdef TRANSPORT_FAILED, HTTP_STATUS, EMPTY_STREAM;
 
 // 失败详情（fault 只承载类别，细节在此带出）：http_code 为本次 HTTP 状态
-//（0 = 无 HTTP 层，如请求序列化失败）；message 为可展示文案（分配在调用方 allocator）。
+// （0 = 无 HTTP 层，如请求序列化失败）；message 为可展示文案（分配在调用方 allocator）。
 struct LlmError
 {
 	int http_code;
@@ -40,12 +40,15 @@ fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, Stri
 		CJsonItem* x = cjson::parse(ctx.extra_body.zstr_tcopy());
 		if (!x || !cjson::is_object(x))
 		{
-			if (x) { cjson::delete(x); }
+			if (x)
+			{
+				cjson::delete(x);
+			}
 			err.http_code = 0;
 			err.message = string::format(allocator, "%s", "LLM_EXTRA_BODY must be a JSON object");
 			return false;
 		}
-		for (CJsonItem* m = x.child; m != null; )
+		for (CJsonItem* m = x.child; m != null;)
 		{
 			CJsonItem* next = m.next;
 			CJsonItem* detached = cjson::detach_item_via_pointer(x, m);
@@ -76,7 +79,10 @@ fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, Stri
 fn int attempt_budget()
 {
 	int retries = DEFAULT_RETRIES;
-	if (retries < 0) { retries = 0; }
+	if (retries < 0)
+	{
+		retries = 0;
+	}
 	return retries + 1;
 }
 
@@ -109,7 +115,10 @@ fn String fold_body_error(String body)
 	if (try er = parse_response(tmem, body))
 	{
 		String em = er.error_message;
-		if (em.len == 0) { em = response_error_message(&er); }
+		if (em.len == 0)
+		{
+			em = response_error_message(&er);
+		}
 		if (em.len > 0) return string::tformat("API error: %s", em);
 	}
 	return "";
@@ -126,8 +135,14 @@ fn String stream_fold_error(StreamRecv* st)
 fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, LlmError* err, ChunkCb cb, void* cb_ud)
 {
 	String payload = "";
-	if (!make_payload(allocator, ctx, req, &payload, err)) { return MALFORMED_JSON~; }
-	if (ctx.debug) { io::eprintfn("---\n%s\n---", payload); }
+	if (!make_payload(allocator, ctx, req, &payload, err))
+	{
+		return MALFORMED_JSON~;
+	}
+	if (ctx.debug)
+	{
+		io::eprintfn("---\n%s\n---", payload);
+	}
 
 	int max_attempts = attempt_budget();
 	int attempt = 1;
@@ -170,14 +185,20 @@ fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, L
 		{
 			cat = AttemptCat.HTTP_STATUS;
 			msg = stream_fold_error(&st);
-			if (msg.len == 0) { msg = string::tformat("HTTP %d", http_code); }
+			if (msg.len == 0)
+			{
+				msg = string::tformat("HTTP %d", http_code);
+			}
 			retryable = !st.emitted;
 		}
 		else if (http_code >= 400)
 		{
 			cat = AttemptCat.HTTP_STATUS;
 			msg = stream_fold_error(&st);
-			if (msg.len == 0) { msg = string::tformat("HTTP %d", http_code); }
+			if (msg.len == 0)
+			{
+				msg = string::tformat("HTTP %d", http_code);
+			}
 			retryable = false;
 		}
 		else
@@ -185,7 +206,10 @@ fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, L
 			// 2xx/3xx 但没有任何输出：优先折叠错误体（200+error），否则空流
 			cat = AttemptCat.EMPTY_STREAM;
 			msg = stream_fold_error(&st);
-			if (msg.len == 0) { msg = EMPTY_RESPONSE_TEXT; }
+			if (msg.len == 0)
+			{
+				msg = EMPTY_RESPONSE_TEXT;
+			}
 			retryable = false;
 		}
 
