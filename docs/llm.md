@@ -9,7 +9,7 @@
 | 项 | 位置 |
 |---|---|
 | CLI 入口 | `cmd/llm.c3`（`module llm`；.env/参数/提示词/打印/usage/ledger/die） |
-| LLM 调用模块 | `src/api/`（`module api`：wire 模型 + LlmOption + 传输/SSE/重试，双入口 `complete`/`stream`） |
+| LLM 调用模块 | `src/api/`（`module api`：wire 模型 + LlmOption + 传输/SSE/重试，单入口 `stream`） |
 | 构建目标 | `llm`（二进制名不变，`cmd/mem` 外部调用零改动） |
 
 ---
@@ -198,7 +198,7 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
 | `HEADLONG_HOME` / `SHELLM_HOME` | 状态目录，缺省 `~/.headlong`（影响第二层 `.env` 与 ledger 默认路径） |
 | `LLM_MOCK_PORT` | 仅 `scripts/mock_llm.py` 使用，默认 8123 |
 
-传输/重试策略为 **api 模块内置常量**（`src/api/context.c3` 的 `DEFAULT_*`，一般无需修改），
+传输/重试策略为 **api 模块内置常量**（`src/api/llm_option.c3` 的 `DEFAULT_*`，一般无需修改），
 不提供环境变量覆盖：建连超时 10s、单次尝试硬上限 600s、低速中止 100 B/s 持续 60s、
 瞬时失败重试 2 次（即最多 3 次尝试）、退避基数 1s（第 n 次等待 `n` 秒）。重试仅针对
 传输层错误与 HTTP 429/5xx，且**已输出部分内容后永不重试**；改默认值即改这些常量。
@@ -263,8 +263,8 @@ LLM_EXTRA_BODY='{"chat_template_kwargs":{"enable_thinking":false}}' llm -m any "
   ```
 
 - 错误文案优先级：curl 错误 → 响应体 API `error.message`（顶层 error / 兼容根键
-  `message`；非流式 `complete()` 入口另折叠 choice 级 `error` 与
-  `finish_reason=="error"`）→ `empty response: stream ended without emitting anything`
+  `message`，choice 级 `error` / `finish_reason=="error"` 亦覆盖）→
+  `empty response: stream ended without emitting anything`
   → `HTTP <code>`。错误体为空或非 JSON 时（如无响应体的 4xx/5xx）直接回退
   `HTTP <code>`，不再套用空流文案（与 4xx 立即失败的修正配套）。
 - 错误信息只从**第一个 `data:` 事件之前**的非 data 行累积，之后的行不再收集。
@@ -314,8 +314,7 @@ llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{
 ## 已知限制
 
 - CLI 恒为流式：请求总是 `stream:true` + `stream_options.include_usage:true`，SSE 打字机输出；
-  端点必须支持 chat-completions 流式。非流式调用不暴露给 CLI，但 `llm` 模块的 `complete()`
-  入口已可用（供未来 agent 主循环等库调用方使用）。
+  端点必须支持 chat-completions 流式（`api` 模块也只有一个 `stream` 入口，无非流式路径）。
 - 只有 chat-completions 一条 wire 路径；无 Anthropic / Gemini / adapter / OpenRouter 路由。
 - **不主动发 `tools` 参数、不做工具调用**（无 function calling 编排、无多模态输入、
   无 attachments）。但 `-M` 里携带的 assistant `tool_calls` / `tool` 消息会原样透传，
@@ -325,11 +324,9 @@ llm -M '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{
 - 重试只看瞬时错误：仅传输层错误与 HTTP 429/5xx 且未输出内容时重试，4xx 等确定性错误
   立即失败；重试策略为内置常量（2 次/退避 1s），无外部开关。
 - 传输层超时/低速中止同为内置常量（见「环境变量」末注）：建连 10s、单次尝试 600s、
-  100 B/s 持续 60s 断开。默认对绝大多数场景够用，极端网络需改 `src/api/context.c3` 常量。
-- 非 2xx 且无 `error.message` 时只报 `HTTP <code>`。choice 级 `error` 与
-  `finish_reason=="error"` 的信号只在非流式 `complete()` 入口折叠进错误文案
-  （`response_error_message`）；CLI 恒走流式 `stream()`，该路径仅折叠顶层
-  `error.message`，与旧版一致。
+  100 B/s 持续 60s 断开。默认对绝大多数场景够用，极端网络需改 `src/api/llm_option.c3` 常量。
+- 非 2xx 且无 `error.message` 时只报 `HTTP <code>`（错误折叠规则见上，流式流同样覆盖
+  choice 级 `error` 与 `finish_reason=="error"`，只取首个 `data:` 之前的缓冲）。
 - `max_tokens` / `max_completion_tokens` 的字段名仍按模型前缀切换（`o1`/`o3`/`o4`/`gpt-5`
   → `max_completion_tokens`）。
 - usage 临时文件只在成功路径删除，失败退出时会在临时目录残留一个 `llm-usage-*.tmp`。

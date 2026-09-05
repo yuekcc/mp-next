@@ -143,7 +143,7 @@ fn void test_llm_req_extra_body_merge() @test
 
 	api::LlmError err;
 	String payload = "";
-	bool ok = api::make_payload(tmem, &ctx, &req, false, &payload, &err);
+	bool ok = api::make_payload(tmem, &ctx, &req, &payload, &err);
 	test::eq(true, ok);
 
 	CJsonItem* o = parse_json(payload);
@@ -165,7 +165,7 @@ fn void test_llm_req_extra_body_temperature_float() @test
 
 	api::LlmError err;
 	String payload = "";
-	bool ok = api::make_payload(tmem, &ctx, &req, false, &payload, &err);
+	bool ok = api::make_payload(tmem, &ctx, &req, &payload, &err);
 	test::eq(true, ok);
 
 	CJsonItem* o = parse_json(payload);
@@ -186,7 +186,7 @@ fn void test_llm_req_extra_body_invalid() @test
 
 	api::LlmError err;
 	String payload = "";
-	bool ok = api::make_payload(tmem, &ctx, &req, false, &payload, &err);
+	bool ok = api::make_payload(tmem, &ctx, &req, &payload, &err);
 	test::eq(false, ok);
 	test::eq(0, err.http_code);
 	test::eq("LLM_EXTRA_BODY must be a JSON object", err.message);

@@ -1,17 +1,6 @@
-// context — api 模块的接口设置（LlmOption）与内置传输/重试常量。
-//
-// 职责边界（2026-09-05 agent loop 立项时定稿）：
-//   LlmOption（原 AppContext）只是「接口设置」数据形态：url/api_key/extra_body/
-//   provider_label/debug。api 模块无状态、不持有任何会话数据——trace
-//   级的数据中心是 agent 级 AppContext（cmd/llm.c3，module llm），以字段级
-//   持有接口设置，调用 api 入口前（run_trace）现场组装 LlmOption；AppContext
-//   不引用本模块类型。配置来源（env 工厂 context_from_env）在调用方侧，模块内
-//   零环境变量访问。
-//   不进模块（属 CLI 交互层）：.env 文件加载、默认模型/默认 max_tokens、
-//   usage/ledger 路径、临时文件、提示词组装、agent loop。
-//
-// 传输/重试策略（建连超时、单次总时长、低速中止、重试次数与退避基数）属
-// 「一般无需修改」的固定项，直接内置为下方 DEFAULT_* 常量，无外部覆盖通道。
+// llm_option — api 模块的接口设置数据形态（LlmOption）与内置传输/重试 DEFAULT_*
+// 常量。模块无状态、零环境变量访问：字段由调用方按自身配置来源组装
+//（default_options() 起步），本模块只消费。
 module api;
 
 // 内置传输/重试策略（一般无需修改；改默认值即改行为）

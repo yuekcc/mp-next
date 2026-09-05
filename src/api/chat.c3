@@ -1,19 +1,5 @@
-// chat — api 模块的调用入口：双入口（complete 非流式 / stream 流式）、payload
-// 序列化（extra body 合并）、重试退避、错误折叠。模块内无任何进程级 exit；
-// 失败以 fault 分类 + LlmError（HTTP code / 文案）表达，由调用方决定处理。
-//
-// 输出通道约定：模块对 stdout 零输出；唯一直接写 stderr 的是 ctx.debug 为真时
-// 的请求体 dump（`---\n<json>\n---`，诊断用途，同 curl VERBOSE 惯例）。逐 chunk
-// 内容/推理打印经回调交给调用方（ChunkCb）。
-//
-// 重试语义（D8，相对旧 CLI 的行为修正）：
-//   仅「传输层错误 / HTTP 429 / 5xx」且未输出任何 chunk 才重试（指数退避）；
-//   HTTP 4xx 立即失败；已输出部分内容永不重试（避免重复尾巴）。
-//
-// 错误文案优先级与旧 CLI 一致：curl 错误 → 响应体 API error.message（complete
-//  还折叠 choice 级 error / finish_reason=="error"）→ 空流文案 → HTTP <code>。
-// 所有需要跨出本调用的字符串（聚合响应、err.message）都分配在调用方传入的
-// allocator 内；临时解析缓冲一律走 tmem。
+// chat — api 模块唯一入口（恒流式）：payload 序列化（extra body 合并）、重试、错误折叠。
+// stdout 零输出、chunk 打印走 ChunkCb、失败经 LlmError；语义详见 docs/llm.md。
 module api;
 
 import std::io;
@@ -38,31 +24,15 @@ enum AttemptCat
 	TRANSPORT,
 	HTTP_STATUS,
 	EMPTY_STREAM,
-	MALFORMED_JSON,
-}
-
-// 非流式尝试的接收缓冲（整包字节；解析在尝试结束后进行）
-struct BodyRecv
-{
-	DString buf;
 }
 
 const String EMPTY_RESPONSE_TEXT = "empty response: stream ended without emitting anything";
 
-fn usz body_write_cb(char* buffer, usz size, usz nitems, void* userdata)
+// 序列化请求体（恒 stream）；extra body 同名键覆盖；非法时填 err.message 返回 false。
+fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, String* out, LlmError* err)
 {
-	BodyRecv* recv = (BodyRecv*)userdata;
-	usz len = size * nitems;
-	for (usz i = 0; i < len; i++) { recv.buf.append_char(buffer[i]); }
-	return len;
-}
-
-// 序列化请求体：固定 stream 语义（入口决定）、合并 LLM_EXTRA_BODY（同名键覆盖）。
-// 返回 false 时 err.message 已填（extra body 非法）。payload 分配在 allocator。
-fn bool make_payload(Allocator allocator, LlmOption* ctx, ChatRequest* req, bool streaming, String* out, LlmError* err)
-{
-	req.stream = streaming;
-	req.stream_include_usage = streaming;
+	req.stream = true;
+	req.stream_include_usage = true;
 
 	CJsonItem* body = request_to_cjson(allocator, req);
 	if (ctx.extra_body.len > 0)
@@ -119,7 +89,6 @@ fn ChatResponse? fail_attempt(Allocator allocator, LlmError* err, int http_code,
 	{
 		case AttemptCat.TRANSPORT: return TRANSPORT_FAILED~;
 		case AttemptCat.HTTP_STATUS: return HTTP_STATUS~;
-		case AttemptCat.MALFORMED_JSON: return MALFORMED_JSON~;
 		default: return EMPTY_STREAM~;
 	}
 }
@@ -153,98 +122,11 @@ fn String stream_fold_error(StreamRecv* st)
 	return fold_body_error(st.err_buf.str_view());
 }
 
-// ===========================================================================
-// 非流式入口：ChatRequest 进，聚合 ChatResponse 出（含 usage、finish_reason、
-// reasoning）。HTTP 200 + 合法 JSON + 无 error 信号即成功。
-// ===========================================================================
-fn ChatResponse? complete(Allocator allocator, LlmOption* ctx, ChatRequest* req, LlmError* err)
-{
-	String payload = "";
-	if (!make_payload(allocator, ctx, req, false, &payload, err)) { return MALFORMED_JSON~; }
-	if (ctx.debug) { io::eprintfn("---\n%s\n---", payload); }
-
-	int max_attempts = attempt_budget();
-	int attempt = 1;
-	while (true)
-	{
-		BodyRecv recv;
-		recv.buf = dstring::new(tmem);
-		int http_code = 0;
-		String terr = http_attempt(ctx, payload, &http_code, &body_write_cb, &recv);
-		String body = recv.buf.str_view();
-
-		if (terr.len == 0 && http_code >= 200 && http_code < 300)
-		{
-			if (body.trim().len == 0)
-			{
-				// 2xx 空响应：非可重试类别（修正后的重试语义），立即失败
-				return fail_attempt(allocator, err, http_code, EMPTY_RESPONSE_TEXT, AttemptCat.EMPTY_STREAM);
-			}
-			ChatResponse? pr = parse_response(allocator, body);
-			if (catch pr)
-			{
-				return fail_attempt(allocator, err, http_code,
-					"malformed JSON response from server", AttemptCat.MALFORMED_JSON);
-			}
-			ChatResponse resp = pr;
-			String em = response_error_message(&resp);
-			if (em.len > 0)
-			{
-				// 200 + error 体（OpenRouter 式）或 finish_reason=="error"：不重试
-				return fail_attempt(allocator, err, http_code,
-					string::tformat("API error: %s", em), AttemptCat.EMPTY_STREAM);
-			}
-			return resp;
-		}
-
-		AttemptCat cat;
-		String msg = "";
-		bool retryable = false;
-		if (terr.len > 0)
-		{
-			cat = AttemptCat.TRANSPORT;
-			msg = terr;
-			retryable = true;
-		}
-		else if (http_code >= 500 || http_code == 429)
-		{
-			cat = AttemptCat.HTTP_STATUS;
-			msg = fold_body_error(body);
-			if (msg.len == 0) { msg = string::tformat("HTTP %d", http_code); }
-			retryable = true;
-		}
-		else if (http_code >= 400)
-		{
-			cat = AttemptCat.HTTP_STATUS;
-			msg = fold_body_error(body);
-			if (msg.len == 0) { msg = string::tformat("HTTP %d", http_code); }
-			retryable = false;
-		}
-		else
-		{
-			// 3xx / 其它未覆盖路径
-			cat = AttemptCat.HTTP_STATUS;
-			msg = string::tformat("HTTP %d", http_code);
-			retryable = false;
-		}
-
-		if (retryable && retry_wait(attempt, max_attempts))
-		{
-			attempt++;
-			continue;
-		}
-		return fail_attempt(allocator, err, http_code, msg, cat);
-	}
-}
-
-// ===========================================================================
-// 流式入口：ChatRequest 进，逐 chunk 先回调后聚合（打字机/推理流由调用方回调
-// 决定输出），HTTP 传输成功且输出过 content 即返回聚合 ChatResponse。
-// ===========================================================================
+// ============================== 流式入口 ==============================
 fn ChatResponse? stream(Allocator allocator, LlmOption* ctx, ChatRequest* req, LlmError* err, ChunkCb cb, void* cb_ud)
 {
 	String payload = "";
-	if (!make_payload(allocator, ctx, req, true, &payload, err)) { return MALFORMED_JSON~; }
+	if (!make_payload(allocator, ctx, req, &payload, err)) { return MALFORMED_JSON~; }
 	if (ctx.debug) { io::eprintfn("---\n%s\n---", payload); }
 
 	int max_attempts = attempt_budget();
