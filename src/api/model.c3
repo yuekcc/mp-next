@@ -3,13 +3,13 @@
 // 原 src/model/model.c3（module model），随「LLM 模块化重构」迁入 src/api/ 并折叠进
 // module api（延续 tool/* 的多文件单模块惯例；wire 层保持独立文件）。
 // 
-// 对应 mini_pi/src/api/api.c3 一侧的概念模型：Message/ToolCall/Usage 等内部
+// 对应 mini_pi/src/api/api.c3 一侧的概念模型：Message/ToolCall 等内部
 // 类型负责把 /chat/completions 的 wire JSON 变成强类型数据；本文件是独立叶子层
 // （只依赖 std + cjson），供 cmd/llm.c3 这类 CLI 以及 api 模块的传输/重试层使用。
 // 
 // 结构体只描述本项目用到的 OpenAI chat-completions 标准字段：
 //   - ChatRequest/ChatMessage/ChatToolCall  —— 请求侧（含 reasoning、tool_calls）
-//   - ChatResponse/ChatChoice/ChatStreamChunk/Usage —— 响应侧（非流式 + 流式帧）
+//   - ChatResponse/ChatChoice/ChatStreamChunk —— 响应侧（非流式 + 流式帧）
 //   - ChatResponse.reasoning：流式聚合的顶层推理内容（累计 delta.reasoning /
 //     reasoning_content），非流式取 message.reasoning / reasoning_content。
 // 
@@ -68,19 +68,10 @@ struct ChatRequest
 	String model; // 必填
 	List{ChatMessage} messages; // 必填，>=1
 	bool stream; // 是否流式
-	bool stream_include_usage; // stream 时额外携带 stream_options.include_usage
 	bool reasoning; // 携带 reasoning 对象
 	String reasoning_effort; // 非空才写 effort
 	String reasoning_summary; // 非空才写 summary
 	String tools_json; // 非空 => 解析为 "tools": [...]（JSON 数组字符串，如 ToolHub.schema() 产出）
-}
-
-// usage 计量（-1 表示缺省/非数字）
-struct Usage
-{
-	long prompt_tokens;
-	long completion_tokens;
-	long reasoning_tokens; // usage.completion_tokens_details.reasoning_tokens
 }
 
 // 非流式响应里单个 choice（只保留 CLI 消费的字段）
@@ -97,8 +88,6 @@ struct ChatChoice
 struct ChatResponse
 {
 	List{ChatChoice} choices;
-	Usage usage;
-	bool has_usage;
 	String error_message; // 顶层 {"error":{...}}.message；兼容 {"message":...} 根键
 	String reasoning; // 顶层推理内容：流式聚合 delta.reasoning（含 reasoning_content
 	// 回退）；非流式取 message.reasoning / reasoning_content
@@ -111,8 +100,6 @@ struct ChatStreamChunk
 	String delta_reasoning; // choices[0].delta.reasoning（标准字段，字符串）；
 	// DeepSeek 私有扩展 reasoning_content 作兼容回退
 	String finish_reason;
-	Usage usage;
-	bool has_usage; // 本帧带 usage（OpenAI 在终止帧/独立 chunk 下发）
 	List{ChatToolCallDelta} tool_calls; // choices[0].delta.tool_calls 增量（可为空）
 }
 
@@ -342,12 +329,6 @@ fn CJsonItem* request_to_cjson(Allocator allocator, ChatRequest* req)
 	// stream 字段经 json_create_bool(int) 写入（cJSON 绑定的 C3 bool 传参有 ABI
 	// 缺陷：false 也会生成 True 节点，见文件头部说明）。
 	body.set_item("stream", json_create_bool(req.stream ? 1 : 0));
-	if (req.stream && req.stream_include_usage)
-	{
-		CJsonItem* so = cjson::new_object(allocator);
-		so.set_item("include_usage", json_create_bool(1));
-		body.set("stream_options", so);
-	}
 	if (req.reasoning)
 	{
 		CJsonItem* r = cjson::new_object(allocator);
@@ -386,19 +367,6 @@ fn String json_to_string(Allocator allocator, CJsonItem* item)
 // 响应侧：解析
 // ===========================================================================
 
-// usage 节点解析（缺省字段保持 -1）。parse_response / parse_stream_chunk 共用，
-// 避免两处对 usage wire 结构的解析漂移。
-fn void parse_usage(Usage* usage, CJsonItem* u)
-{
-	if (!u.is_object()) return;
-	usage.prompt_tokens = (long)(u.get_key_int("prompt_tokens") ?? -1);
-	usage.completion_tokens = (long)(u.get_key_int("completion_tokens") ?? -1);
-	if (CJsonItem* det = u.get_key("completion_tokens_details"))
-	{
-		usage.reasoning_tokens = (long)(det.get_key_int("reasoning_tokens") ?? -1);
-	}
-}
-
 // 非流式响应体 → ChatResponse。JSON 非法返回 MALFORMED_JSON。
 fn ChatResponse? parse_response(Allocator allocator, String json)
 {
@@ -408,10 +376,6 @@ fn ChatResponse? parse_response(Allocator allocator, String json)
 
 	ChatResponse resp;
 	resp.choices.init(allocator);
-	resp.usage.prompt_tokens = -1;
-	resp.usage.completion_tokens = -1;
-	resp.usage.reasoning_tokens = -1;
-	resp.has_usage = false;
 	resp.error_message = "";
 	resp.reasoning = "";
 
@@ -422,12 +386,6 @@ fn ChatResponse? parse_response(Allocator allocator, String json)
 	if (resp.error_message.len == 0)
 	{
 		resp.error_message = root.get_key_string("message", allocator) ?? "";
-	}
-
-	if (CJsonItem* u = root.get_key("usage"))
-	{
-		resp.has_usage = u.is_object();
-		parse_usage(&resp.usage, u);
 	}
 
 	if (CJsonItem* cs = root.get_key("choices"))
@@ -496,17 +454,7 @@ fn ChatStreamChunk? parse_stream_chunk(Allocator allocator, String json)
 	c.delta_content = "";
 	c.delta_reasoning = "";
 	c.finish_reason = "";
-	c.usage.prompt_tokens = -1;
-	c.usage.completion_tokens = -1;
-	c.usage.reasoning_tokens = -1;
-	c.has_usage = false;
 	c.tool_calls.init(allocator);
-
-	if (CJsonItem* u = root.get_key("usage"))
-	{
-		c.has_usage = u.is_object();
-		parse_usage(&c.usage, u);
-	}
 
 	if (CJsonItem* cs = root.get_key("choices"))
 	{
