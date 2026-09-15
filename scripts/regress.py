@@ -479,6 +479,43 @@ def s2_interrupt():
         server.stop()
 
 
+def s5_max_turns():
+    """AC: --max-turns n>0 时最多 n 次请求；达到上限则 stderr 说明、stdout 空、退出码 3。"""
+    server = Mock("always_tools", port=PORT + 10)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                        "--max-turns", "3"], stdin_text="spin")
+        check("S5 --max-turns=3：退出码 3（循环未收敛）", proc.returncode == 3,
+              "exit=%d stderr=%s" % (proc.returncode, proc.stderr))
+        check("S5 --max-turns=3：stdout 为空", proc.stdout == "", repr(proc.stdout))
+        check("S5 --max-turns=3：stderr 说明原因",
+              "--max-turns=3 上限" in proc.stderr, repr(proc.stderr))
+        check("S5 --max-turns=3：恰好发 3 次请求", len(server.requests()) == 3,
+              str(len(server.requests())))
+
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                        "--max-turns=1"], stdin_text="spin")
+        check("S5 --max-turns=1：恰好发 1 次请求", len(server.requests()) == 1,
+              str(len(server.requests())))
+        check("S5 --max-turns=1：退出码 3", proc.returncode == 3, str(proc.returncode))
+
+        # 不给该参数 = 不设上限：这里给 5 秒，够跑出远多于 1 次请求
+        server.reset()
+        try:
+            proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                           stdin_text="spin", timeout=5)
+            unlimited_returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            unlimited_returncode = None  # 5 秒都没跑完 → 确实没有上限
+        check("S5 不给 --max-turns：不设上限（5 秒内未自行止损）",
+              unlimited_returncode is None and len(server.requests()) > 3,
+              "returncode=%s requests=%d" % (unlimited_returncode, len(server.requests())))
+    finally:
+        server.stop()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--verbose", action="store_true")
@@ -506,6 +543,7 @@ def main():
         s2_bad_arguments()
         s4_ci_hygiene(mock)
         s2_interrupt()
+        s5_max_turns()
 
         wins = 0
         for index in range(1, args.repetitions + 1):

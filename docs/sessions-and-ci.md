@@ -58,8 +58,9 @@ Remove-Item "$env:USERPROFILE\.llmcli\sessions\work.jsonl"
 - API key 不落盘，stderr 上出现时一律脱敏（`sk-***abc`）。
 - 内置 Bash 工具默认放行任意命令：提示注入或模型误判会导致任意代码执行。每次命令原文都会
   打印到 stderr 供审计，`--help` 里也有警示。
-- v1 不设 turn 上限、不设 HTTP/命令超时、不截断工具输出、不设失败阈值（PRD 已确认）。失控时
-  用 Ctrl+C 中断——正在执行的子进程会被一并终止，不留孤儿，退出码 130。
+- 默认不设 turn 上限、不设 HTTP/命令超时、不截断工具输出。需要止损就加 `--max-turns <n>`
+  （n>0 生效，达到上限时 stderr 说明原因、stdout 为空、退出码 3）；不设时用 Ctrl+C 中断——
+  正在执行的子进程会被一并终止，不留孤儿，退出码 130。
 
 ## CI 里的用法
 

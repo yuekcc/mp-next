@@ -7,4 +7,4 @@ SYSTEM_PROMPT="You're useful AI assistant"
     --api-key sk-1234 \
     --system-prompt "${SYSTEM_PROMPT}" \
     --debug \
-    "$@"
+    "有什么内置工具可以使用"

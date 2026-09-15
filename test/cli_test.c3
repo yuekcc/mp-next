@@ -86,6 +86,62 @@ fn void test_input_file_missing_is_usage_error() @test
 	             "应指明路径，实际：%s", parsed.error);
 }
 
+fn void test_max_turns_parsing() @test
+{
+	String path = "build/test_cli_input.txt";
+	(void)file::save(path, "内容");
+
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
+	                                       string::tformat("--input-file=%s", path), "--max-turns=3" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.opts.max_turns, 3);
+	if (parsed.opts.user_input.ptr) free(parsed.opts.user_input.ptr);
+
+	// 空格形式
+	parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
+	                      "--max-turns", "7" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.opts.max_turns, 7);
+	if (parsed.opts.user_input.ptr) free(parsed.opts.user_input.ptr);
+}
+
+fn void test_max_turns_zero_or_negative_means_unlimited() @test
+{
+	String path = "build/test_cli_input.txt";
+	(void)file::save(path, "内容");
+
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
+	                                       "--input-file", path, "--max-turns", "0" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.opts.max_turns, 0);
+	if (parsed.opts.user_input.ptr) free(parsed.opts.user_input.ptr);
+
+	parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
+	                      "--max-turns", "-5" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.opts.max_turns, 0);
+	if (parsed.opts.user_input.ptr) free(parsed.opts.user_input.ptr);
+}
+
+fn void test_max_turns_non_integer_is_usage_error() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--model", "m", "--api-key", "k",
+	                                       "--max-turns", "abc", "--input-file", "x" });
+	test::eq(parsed.error.len != 0, true);
+	test::@check(parsed.error.contains("--max-turns 需要整数"),
+	             "应提示需要整数，实际：%s", parsed.error);
+}
+
+fn void test_max_turns_defaults_to_unlimited() @test
+{
+	String path = "build/test_cli_input.txt";
+	(void)file::save(path, "内容");
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
+	                                       "--input-file", path });
+	test::eq(parsed.opts.max_turns, 0);
+	if (parsed.opts.user_input.ptr) free(parsed.opts.user_input.ptr);
+}
+
 fn void test_list_sessions_skips_required_flags() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--list-sessions" });

@@ -29,6 +29,7 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 
 可选参数：
   --session-id <id>        会话 id；同一 id 跨调用累积历史
+  --max-turns <n>          最多发起 n 次请求（n>0 生效）；不给或 <=0 表示不设上限
   --system-prompt <text>   系统提示词（与 --system-prompt-file 互斥）
   --system-prompt-file <f> 系统提示词文件
   --list-sessions          列出已有会话（id、更新时间、消息数），随后退出
@@ -61,8 +62,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 
 风险提示：
   内置 Bash 工具默认放行任意命令，提示注入或模型误判可导致任意代码执行。
-  每次调用的命令原文都会打印到 stderr 供审计。v1 不设 turn 上限、不设超时、
-  不截断工具输出；失控时请用 Ctrl+C 中断，CI 中请用外部超时
+  每次调用的命令原文都会打印到 stderr 供审计。默认不设 turn 上限、不设超时、
+  不截断工具输出；不设 --max-turns 时失控请用 Ctrl+C 中断，CI 中请用外部超时
   （如 timeout 60 llmcli ... 或 job timeout）包裹。
 
 CI/脚本集成：
@@ -82,6 +83,7 @@ struct Options
 	String input_file;
 	String prompt;
 	String user_input;
+	int max_turns;   // 0 或负数 = 不设上限
 	bool quiet;
 	bool debug;
 	bool no_color;
@@ -156,6 +158,22 @@ fn ParseResult parse(String[] args)
 		if (name == "--debug") { o.debug = true; i++; continue; }
 		if (name == "--no-color") { o.no_color = true; i++; continue; }
 		if (name == "--list-sessions") { o.list_sessions = true; i++; continue; }
+
+		if (name == "--max-turns")
+		{
+			String value;
+			if (!take_value(args, &i, name, inline_value, has_inline, &value, &res.error)) return res;
+			int? parsed = value.to_int();
+			if (catch err = parsed)
+			{
+				res.error = string::tformat("--max-turns 需要整数，收到 %s", value);
+				return res;
+			}
+			// <=0 视为不设上限（与"没给这个参数"等价）
+			if (parsed > 0) o.max_turns = parsed;
+			i++;
+			continue;
+		}
 
 		String* slot = null;
 		if (name == "--api-key") slot = &o.api_key;

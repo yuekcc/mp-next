@@ -109,12 +109,20 @@ fn int run(cli::Options* options)
 
 	bool with_tools = tools::registry_len != 0;
 	String session_note = persist ? string::format(tmem, " session=%s", options.session_id) : "";
-	log::info("Trace 开始%s，model=%s，tools=%d", session_note, options.model, (int)tools::registry_len);
+	String limit_note = options.max_turns > 0 ? string::format(tmem, "，max-turns=%d", options.max_turns) : "";
+	log::info("Trace 开始%s，model=%s，tools=%d%s",
+	          session_note, options.model, (int)tools::registry_len, limit_note);
 
 	usz turn = 0;
 	while LOOP: (true) @pool()
 	{
 		turn++;
+		// --max-turns：n>0 时最多发起 n 次请求；没给或 <=0 则不设上限
+		if (options.max_turns > 0 && turn > (usz)options.max_turns)
+		{
+			log::error("已达到 --max-turns=%d 上限，停止循环（本轮没有最终答案）", options.max_turns);
+			return cli::EXIT_UNCONVERGED;
+		}
 		Clock mark = clock::now();
 		ChatResponse response = chat_once(options, messages.to_array(tmem), with_tools);
 		if (!response.ok)

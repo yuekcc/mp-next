@@ -103,6 +103,16 @@ SCENARIOS = {
         },
         {"finish_reason": "stop", "content": "recovered from bad arguments"},
     ],
+    # 永远返回 tool_calls（脚本用完后重复最后一条），用来验证 --max-turns 止损
+    "always_tools": [
+        {
+            "finish_reason": "tool_calls",
+            "tool_calls": [
+                {"id": "call_loop", "name": "bash",
+                 "arguments": {"command": "echo spin"}}
+            ],
+        },
+    ],
 }
 
 
