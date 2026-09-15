@@ -12,7 +12,7 @@
   "targets": {
     "llmcli": {
       "type": "executable",
-      "sources": ["cmd/llmcli.c3"]
+      "sources": ["src/**", "cmd/llmcli.c3"]
     }
   },
   "cpu": "generic",
