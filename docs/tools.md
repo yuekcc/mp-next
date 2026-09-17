@@ -1,6 +1,6 @@
 # 新增一个工具
 
-`llmcli` 内置 Bash 与 EditFile 两个工具。工具经 `src/tools.c3` 里的注册表接入，**agent loop
+`llmcli` 内置 Bash、EditFile、ReadFile、WriteFile、ListDir 五个工具。工具经 `src/tools.c3` 里的注册表接入，**agent loop
 不需要任何改动**：注册表里有什么，LLM 就看得见什么。
 
 ## 工具接口
@@ -29,31 +29,42 @@ struct Tool
 - 你返回的 `content` 由调用方释放，所以**必须**用 `ok(...)` / `fail(...)` 构造
   （它们会 `copy(mem)` 一份），不要把指向 `tmem` 或字符串常量的切片直接塞进去。
 
-## 照抄示例：加一个 `read_file` 工具
+## 照抄示例：加一个 `grep` 工具
 
-在 `src/tools.c3` 里加一个实现函数：
+假设要新增一个在文件里搜关键字的 `grep` 工具。在 `src/tools.c3` 里加一个实现函数：
 
 ```c3
-fn ToolResult tool_read_file(CJsonItem* args)
+fn ToolResult tool_grep(CJsonItem* args)
 {
 	String path = args.get_key_string("path", tmem) ?? "";
+	String pattern = args.get_key_string("pattern", tmem) ?? "";
 	if (!path.len) return fail("缺少必填参数 path（字符串）");
+	if (!pattern.len) return fail("缺少必填参数 pattern（字符串）");
 
 	char[]? loaded = file::load(tmem, path);
 	if (catch err = loaded) return fail(string::tformat("无法读取 %s：%s", path, err));
 
-	return ok(string::tformat("已读取 %s（%d 字节）：\n%s", path, loaded.len, (String)loaded));
+	DString buf = dstring::new(tmem);
+	usz n = 0;
+	foreach (line : ((String)loaded).split(tmem, "\n"))
+	{
+		if (line.contains(pattern)) { buf.appendf("%s\n", line); n++; }
+	}
+	return ok(string::tformat("在 %s 中命中 %d 行：\n%s", path, n, buf.str_view()));
 }
 ```
 
-再在 `register_builtin_tools()` 里注册：
+再在 `register_builtin_tools()` 里注册（注意 `parameters` 是合法 JSON Schema，`content` 必须用 `ok`/`fail` 构造）：
 
 ```c3
 	register_tool({
-		.name = "read_file",
-		.description = "读取一个文本文件并返回内容。",
-		.parameters = `{"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}`,
-		.execute = &tool_read_file,
+		.name = "grep",
+		.description = "在文件里搜索包含指定模式的行。",
+		.parameters = `{"type":"object","properties":{` +++
+			`"path":{"type":"string","description":"文件路径"},` +++
+			`"pattern":{"type":"string","description":"要搜索的子串"}},` +++
+			`"required":["path","pattern"]}`,
+		.execute = &tool_grep,
 	});
 ```
 
@@ -61,8 +72,10 @@ fn ToolResult tool_read_file(CJsonItem* args)
 
 ```bash
 c3c build
-llmcli --model ... --api-key ... "读一下 README.md 的开头"
+llmcli --model ... --api-key ... "在 src/cli.c3 里搜 parse"
 ```
+
+已有的 `read_file` / `write_file` / `list_dir` 也是按这个套路注册的，可直接参考源码。
 
 ## 注意
 

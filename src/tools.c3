@@ -1,6 +1,6 @@
 module llmcli::tools;
 
-import std::io, std::os::process, std::thread, libc;
+import std::io, std::io::path, std::os::process, std::thread, std::sort, std::time, std::collections::list, libc;
 import cjson;
 import llmcli::buf, llmcli::log;
 
@@ -161,7 +161,11 @@ fn int read_stream_worker(void* arg)
 	return 0;
 }
 
-// 执行一条 shell 命令，回填完整 stdout/stderr 与退出码（v1 不截断）。
+// 执行一条 shell 命令，回填 stdout/stderr 与退出码。
+// 输出合并后截断到末 2000 行（与 mini_pi 的 Bash 一致）；截断前的完整输出落盘到临时文件，
+// 便于模型在需要时读取完整结果。
+const usz BASH_LINE_LIMIT = 2000;
+
 fn ToolResult bash_run(String command)
 {
 	log::info("[bash] %s", command);
@@ -212,10 +216,52 @@ fn ToolResult bash_run(String command)
 	int code = process.join() ?? -1;
 	if (err_thread_started) (void)err_thread.join();
 
-	return ok(string::tformat("exit_code: %d\n--- stdout ---\n%s%s\n--- stderr ---\n%s%s",
-	                          code,
-	                          out.to_string(tmem), out.len && out.ptr[out.len - 1] != '\n' ? "\n" : "",
-	                          err.to_string(tmem), err.len && err.ptr[err.len - 1] != '\n' ? "\n" : ""));
+	// 合并 stdout + stderr 为单一输出流（按源 Bash 的"全部输出"语义）。
+	DString combined = dstring::new(tmem);
+	combined.append(out.to_string(tmem));
+	if (err.len)
+	{
+		if (!combined.str_view().ends_with("\n")) combined.append("\n");
+		combined.append(err.to_string(tmem));
+	}
+	if (!combined.str_view().ends_with("\n")) combined.append("\n");
+
+	String full = combined.str_view();
+	String output_file = "";
+	bool truncated = false;
+	String[] lines = full.split(tmem, "\n");
+	if (lines.len > BASH_LINE_LIMIT)
+	{
+		truncated = true;
+		// 完整输出落盘（临时目录），截断只保留末 2000 行。
+		if (try tmp = path::temp_directory(tmem))
+		{
+			Path dump = tmp.append(tmem, string::tformat("llmcli_bash_%d.txt", (long)time::now()))!!;
+			if (catch save_err = file::save((String)dump, full))
+			{
+				log::warn("bash 输出落盘失败：%s", save_err);
+			}
+			else
+			{
+				output_file = (String)dump;
+			}
+		}
+	}
+
+	DString result = dstring::new(tmem);
+	result.appendf("$ %s\n\n", command);
+	usz start = truncated ? lines.len - BASH_LINE_LIMIT : 0;
+	for (usz i = start; i < lines.len; i++) result.appendf("%s\n", lines[i]);
+	if (truncated)
+	{
+		result.appendf("... (truncated, full output stored at %s)\n", output_file);
+	}
+	if (code != 0)
+	{
+		result.appendf("\n\nCommand exited with code %d", code);
+	}
+
+	return ok(result.str_view());
 }
 
 fn ToolResult tool_bash(CJsonItem* args)
@@ -230,29 +276,55 @@ fn ToolResult tool_bash(CJsonItem* args)
 fn ToolResult tool_edit_file(CJsonItem* args)
 {
 	String path = args.get_key_string("path", tmem) ?? "";
-	String old_text = args.get_key_string("old", tmem) ?? "";
-	String new_text = args.get_key_string("new", tmem) ?? "";
+	String old_text = args.get_key_string("old_string", tmem) ?? "";
+	String new_text = args.get_key_string("new_string", tmem) ?? "";
+	bool allow_multiple = args.get_key_bool("allow_multiple") ?? false;
 
 	if (!path.len) return fail("缺少必填参数 path（字符串）");
-	if (!old_text.len) return fail("缺少必填参数 old（字符串）");
+	if (!old_text.len) return fail("缺少必填参数 old_string（字符串）");
+	if (old_text == new_text) return fail("old_string 与 new_string 相同，无需修改");
 
 	char[]? loaded = file::load(tmem, path);
 	if (catch err = loaded) return fail(string::tformat("无法读取 %s：%s", path, err));
 	String text = (String)loaded;
 
-	// 唯一匹配才动手，避免改坏文件
+	// 唯一匹配才动手（除非显式 allow_multiple），避免改坏文件
 	usz hits = count_occurrences(text, old_text);
-	if (hits == 0) return fail(string::tformat("在 %s 中找不到 old 文本（不做修改）", path));
-	if (hits > 1) return fail(string::tformat("old 文本在 %s 中出现 %d 次，不唯一（不做修改）",
-	                                          path, hits));
+	if (hits == 0) { return fail(string::tformat("在 %s 中找不到 old_string（不做修改）", path)); }
+	if (hits > 1 && !allow_multiple)
+	{
+		return fail(string::tformat("old_string 在 %s 中出现 %d 次，不唯一（不做修改）。"
+		                            "需多处替换请设 allow_multiple=true", path, hits));
+	}
 
-	usz at = (usz)(text.index_of(old_text) ?? 0);
-	String updated = string::tformat("%s%s%s", text[:at], new_text, text[at + old_text.len .. ^1]);
-	if (catch err = file::save(path, updated)) return fail(string::tformat("写入 %s 失败：%s", path, err));
+	// 从头扫描，按非重叠出现依次替换；allow_multiple=false 只换第一处。
+	DString buf = dstring::new(tmem);
+	usz i = 0;
+	usz replaced = 0;
+	while (i <= text.len - old_text.len)
+	{
+		if (text[i : old_text.len] == old_text)
+		{
+			buf.append(new_text);
+			i += old_text.len;
+			replaced++;
+			if (!allow_multiple) break;
+		}
+		else
+		{
+			buf.append(text[i : 1]);
+			i++;
+		}
+	}
+	buf.append(text[i : text.len - i]);
 
-	log::info("[edit_file] %s (-%d +%d 行)", path, line_count(old_text), line_count(new_text));
-	return ok(string::tformat("已修改 %s：替换 1 处，- %d 行 / + %d 行",
-	                          path, line_count(old_text), line_count(new_text)));
+	if (catch err = file::save(path, buf.str_view()))
+	{
+		return fail(string::tformat("写入 %s 失败：%s", path, err));
+	}
+
+	log::info("[edit_file] %s 替换 %d 处", path, replaced);
+	return ok(string::tformat("已修改 %s：替换 %d 处", path, replaced));
 }
 
 fn usz count_occurrences(String haystack, String needle)
@@ -267,24 +339,162 @@ fn usz count_occurrences(String haystack, String needle)
 	return count;
 }
 
-fn usz line_count(String text)
+// ---- ReadFile --------------------------------------------------------------
+
+// 读取文本文件并按行回填。offset 是 1-based 起始行（<=0 表示从头），limit 是最多行数（<=0 表示不限制）。
+// 行号前缀 `N\t` 便于模型在 EditFile 时定位；不引入 hash 机制（mp-next 无对应 util）。
+fn ToolResult tool_read_file(CJsonItem* args)
 {
-	usz count = text.len ? 1 : 0;
-	foreach (c : text)
+	String path = args.get_key_string("path", tmem) ?? "";
+	if (!path.len) return fail("缺少必填参数 path（字符串）");
+
+	int offset = args.get_key_int("offset") ?? 0;
+	int limit = args.get_key_int("limit") ?? 0;
+
+	char[]? loaded = file::load(tmem, path);
+	if (catch err = loaded) return fail(string::tformat("无法读取 %s：%s", path, err));
+	String text = (String)loaded;
+
+	String[] lines = text.split(tmem, "\n");
+	usz total = lines.len;
+	usz start = offset > 0 ? (usz)(offset - 1) : 0;
+	if (start >= total) return fail(string::tformat("文件共 %d 行，offset %d 越界", total, offset));
+
+	usz end = total;
+	if (limit > 0)
 	{
-		if (c == '\n') count++;
+		end = start + (usz)limit;
+		if (end > total) end = total;
 	}
-	return count;
+
+	DString buf = dstring::new(tmem);
+	for (usz i = start; i < end; i++)
+	{
+		buf.appendf("%d\t%s\n", i + 1, lines[i]);
+	}
+	buf.appendf("(读取 %s：共 %d 行，显示 %d-%d)", path, total, start + 1, end);
+	return ok(buf.str_view());
 }
 
-// ---- 注册 -----------------------------------------------------------------
+// ---- WriteFile -------------------------------------------------------------
+
+fn ToolResult tool_write_file(CJsonItem* args)
+{
+	String path = args.get_key_string("path", tmem) ?? "";
+	String content = args.get_key_string("content", tmem) ?? "";
+	if (!path.len) return fail("缺少必填参数 path（字符串）");
+
+	// file::save 不建父目录：手动补一层，对齐 mini_pi 的 WriteFile 语义。
+	if (try p = path::new(tmem, path))
+	{
+		if (try parent = p.parent())
+		{
+			if (!path::exists(parent))
+			{
+				if (try made = path::mkdir(parent, true)) { /* ok */ }
+				else { return fail(string::tformat("无法创建父目录 %s", (String)parent)); }
+			}
+		}
+	}
+
+	if (catch err = file::save(path, content))
+	{
+		return fail(string::tformat("写入 %s 失败：%s", path, err));
+	}
+
+	log::info("[write_file] %s (%d 字节)", path, content.len);
+	return ok(string::tformat("已写入 %s（%d 字节）", path, content.len));
+}
+
+// ---- ListDir ---------------------------------------------------------------
+
+struct LsEntry
+{
+	String name;
+	bool is_dir;
+	long size;
+}
+
+fn int _ls_entry_cmp(LsEntry a, LsEntry b)
+{
+	if (a.is_dir != b.is_dir) return a.is_dir ? -1 : 1;
+	return a.name.compare_to(b.name);
+}
+
+// 纯 c3 列举目录：目录在前、文件在后，各自按名升序；文件附人类可读大小；
+// 末行输出 Summary（文件/目录计数）。limit<=0 表示不限制（对齐 mini_pi 默认 500）。
+fn ToolResult tool_list_dir(CJsonItem* args)
+{
+	String dir_path = args.get_key_string("path", tmem) ?? ".";
+	int limit = args.get_key_int("limit") ?? 500;
+
+	Path dir;
+	if (try d = path::new(tmem, dir_path)) { dir = d; }
+	else { return fail(string::tformat("非法路径 %s", dir_path)); }
+	if (!path::exists(dir)) return fail(string::tformat("目录不存在：%s", dir_path));
+	if (!path::is_dir(dir)) return fail(string::tformat("不是目录：%s", dir_path));
+
+	PathList? maybe = path::ls(tmem, dir);
+	if (catch err = maybe) return fail(string::tformat("列举 %s 失败：%s", dir_path, err));
+	PathList entries = maybe;
+
+	list::List{LsEntry} list;
+	list.init(tmem);
+	foreach (entry : entries)
+	{
+		LsEntry e;
+		e.name = entry.basename();
+		Path full = dir.tappend(entry.basename())!!;
+		e.is_dir = path::is_dir(full);
+		e.size = e.is_dir ? 0 : (path::file_size(full) ?? 0);
+		list.push(e);
+	}
+	sort::quicksort(list.array_view(), &_ls_entry_cmp);
+
+	int files = 0;
+	int dirs = 0;
+	int shown = 0;
+	DString buf = dstring::new(tmem);
+	foreach (&e : list)
+	{
+		if (e.is_dir) { dirs++; } else { files++; }
+		if (limit > 0 && shown >= limit) { continue; }
+		if (e.is_dir)
+		{
+			buf.appendf("%s/\n", e.name);
+		}
+		else
+		{
+			buf.appendf("%s\t%s\n", e.name, human_size(e.size));
+		}
+		shown++;
+	}
+	if (limit > 0 && shown < (int)list.len())
+	{
+		buf.appendf("... (%d more entries)\n", (int)list.len() - shown);
+	}
+	buf.appendf("Summary: %d files, %d dirs", files, dirs);
+
+	return ok(buf.str_view());
+}
+
+// 字节数 -> 人类可读：193B / 3.2K / 3.3M / 1.0G
+fn String human_size(long size)
+{
+	if (size < 1024) return string::tformat("%dB", size);
+	double b = (double)size;
+	if (b < 1024.0 * 1024.0) return string::tformat("%.1fK", b / 1024.0);
+	if (b < 1024.0 * 1024.0 * 1024.0) return string::tformat("%.1fM", b / (1024.0 * 1024.0));
+	return string::tformat("%.1fG", b / (1024.0 * 1024.0 * 1024.0));
+}
 
 fn void register_builtin_tools()
 {
 	register_tool({
 		.name = "bash",
-		.description = "在用户机器上执行一条 shell 命令，回填完整 stdout/stderr 与退出码。"
-		               "Windows 下经 cmd.exe /C 执行，其它平台经 /bin/sh -c。",
+		.description = "在用户机器上执行一条 shell 命令，回填 stdout/stderr 与退出码。"
+		               "输出截断到末 2000 行，截断前完整输出落盘到临时文件。Windows 下经 cmd.exe /C，"
+		               "其它平台经 /bin/sh -c。",
 		.parameters =
 			`{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"}},` +++
 			`"required":["command"]}`,
@@ -292,13 +502,47 @@ fn void register_builtin_tools()
 	});
 	register_tool({
 		.name = "edit_file",
-		.description = "把文件中的一段文本替换成另一段。old 必须在文件中唯一匹配，否则不做任何修改并返回错误。",
+		.description = "把文件中的一段文本精确替换成另一段。old_string 必须精确匹配（含空白与换行）。"
+		               "默认要求唯一匹配，出现多次会报错且不修改；设 allow_multiple=true 可替换全部。",
 		.parameters =
 			`{"type":"object","properties":{` +++
 			`"path":{"type":"string","description":"目标文件路径"},` +++
-			`"old":{"type":"string","description":"要被替换的原文（需唯一）"},` +++
-			`"new":{"type":"string","description":"替换后的新文本"}},` +++
-			`"required":["path","old","new"]}`,
+			`"old_string":{"type":"string","description":"要被替换的原文（需精确匹配）"},` +++
+			`"new_string":{"type":"string","description":"替换后的新文本"},` +++
+			`"allow_multiple":{"type":"boolean","description":"true 时替换全部匹配，默认 false（要求唯一）"}},` +++
+			`"required":["path","old_string","new_string"]}`,
 		.execute = &tool_edit_file,
+	});
+	register_tool({
+		.name = "read_file",
+		.description = "读取一个文本文件并按行回填（行号前缀便于定位）。大文件用 offset/limit 分页。",
+		.parameters =
+			`{"type":"object","properties":{` +++
+			`"path":{"type":"string","description":"文件路径"},` +++
+			`"offset":{"type":"number","description":"起始行（1-based，默认从头）"},` +++
+			`"limit":{"type":"number","description":"最多读取行数（默认全部）"}},` +++
+			`"required":["path"]}`,
+		.execute = &tool_read_file,
+	});
+	register_tool({
+		.name = "write_file",
+		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；自动创建父目录。",
+		.parameters =
+			`{"type":"object","properties":{` +++
+			`"path":{"type":"string","description":"文件路径"},` +++
+			`"content":{"type":"string","description":"要写入的内容"}},` +++
+			`"required":["path","content"]}`,
+		.execute = &tool_write_file,
+	});
+	register_tool({
+		.name = "list_dir",
+		.description = "列举目录内容：目录在前、文件在后各按名排序，文件附大小；末行输出 Summary。"
+		               "默认最多 500 条，可用 limit 调整（<=0 不限制）。",
+		.parameters =
+			`{"type":"object","properties":{` +++
+			`"path":{"type":"string","description":"目录路径（默认当前目录）"},` +++
+			`"limit":{"type":"number","description":"最多返回条目数（默认 500，<=0 不限制）"}},` +++
+			`"required":[]}`,
+		.execute = &tool_list_dir,
 	});
 }

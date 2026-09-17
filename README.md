@@ -1,6 +1,6 @@
 # llmcli
 
-把 LLM 接进 shell 流水线的单二进制 CLI：OpenAI chat completions 兼容，内置 agent loop 与工具调用（Bash、EditFile），stdout 只输出最终答案，过程日志全部走 stderr。
+把 LLM 接进 shell 流水线的单二进制 CLI：OpenAI chat completions 兼容，内置 agent loop 与工具调用（Bash、EditFile、ReadFile、WriteFile、ListDir），stdout 只输出最终答案，过程日志全部走 stderr。
 
 ## 构建
 

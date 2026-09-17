@@ -61,8 +61,8 @@ SCENARIOS = {
                     "name": "edit_file",
                     "arguments": {
                         "path": "{{FILE}}",
-                        "old": "old-text",
-                        "new": "new-text",
+                        "old_string": "old-text",
+                        "new_string": "new-text",
                     },
                 }
             ],
