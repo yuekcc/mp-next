@@ -18,7 +18,7 @@ struct Tool
 {
 	String name;         // LLM 看到的函数名
 	String description;  // 给 LLM 看的用途说明
-	String parameters;   // 参数 JSON Schema 原文
+	String parameters;   // 参数 JSON Schema；内置工具的 schema 在 src/tool_schemas/*.json，用 $embed 嵌入
 	ToolFn execute;
 }
 ```
@@ -54,16 +54,27 @@ fn ToolResult tool_grep(CJsonItem* args)
 }
 ```
 
-再在 `register_builtin_tools()` 里注册（注意 `parameters` 是合法 JSON Schema，`content` 必须用 `ok`/`fail` 构造）：
+再新建 `src/tool_schemas/grep.json` 放参数 JSON Schema：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": { "type": "string", "description": "文件路径" },
+    "pattern": { "type": "string", "description": "要搜索的子串" }
+  },
+  "required": ["path", "pattern"]
+}
+```
+
+在 `register_builtin_tools()` 里注册（schema 文件由 `$embed` 编译期嵌入，路径相对 `src/tools.c3`；
+`content` 必须用 `ok`/`fail` 构造）：
 
 ```c3
 	register_tool({
 		.name = "grep",
 		.description = "在文件里搜索包含指定模式的行。",
-		.parameters = `{"type":"object","properties":{` +++
-			`"path":{"type":"string","description":"文件路径"},` +++
-			`"pattern":{"type":"string","description":"要搜索的子串"}},` +++
-			`"required":["path","pattern"]}`,
+		.parameters = $embed("tool_schemas/grep.json"),
 		.execute = &tool_grep,
 	});
 ```
@@ -75,11 +86,12 @@ c3c build
 llmcli --model ... --api-key ... "在 src/cli.c3 里搜 parse"
 ```
 
-已有的 `read_file` / `write_file` / `list_dir` 也是按这个套路注册的，可直接参考源码。
+已有的五个工具的 schema 都在 `src/tool_schemas/`，注册方式可直接参考源码。
 
 ## 注意
 
 - `parameters` 必须是合法 JSON Schema；解析失败时该工具的参数会被跳过（LLM 仍能调用，只是没有参数约束）。
+  `c3c test` 里的 `test_builtin_tool_schemas_are_valid_json` 会校验内置 schema。
 - 工具注册表是固定 32 槽（`MAX_TOOLS`），超了会告警并忽略。
 - 单个工具内部要读写的临时字符串用 `tmem`，只有返回给调用方的 `content` 走 `ok`/`fail`（mem）。
 - 一次工具调用失败不是致命错误：把原因写进 `content` 并设 `is_error = true`，agent 会原样回填给

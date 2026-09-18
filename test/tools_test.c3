@@ -1,6 +1,7 @@
 module llmcli::test_tools;
 
 import std::io;
+import cjson;
 import llmcli::tools;
 
 // ToolResult.content 归调用方所有（mem 上的堆串），测试里统一释放
@@ -12,6 +13,21 @@ fn void release(ToolResult* result) @private
 fn void setup() @private
 {
 	if (!tools::find_tool("bash")) tools::register_builtin_tools();
+}
+
+// 内置工具的 parameters 由 $embed 从 src/tool_schemas/*.json 嵌入；
+// 文件写坏时 to_json 只会静默跳过参数，这里兜底校验每个 schema 都是合法 JSON。
+fn void test_builtin_tool_schemas_are_valid_json() @test
+{
+	setup();
+	test::@check(tools::registry_len > 0, "注册表为空，setup() 没生效？");
+	foreach (tool : tools::registry[0 : tools::registry_len])
+	{
+		CJsonItem* parsed = cjson::parse_with_length((ZString)tool.parameters.ptr,
+		                                             tool.parameters.len);
+		test::@check(parsed != null, "%s 的 parameters 不是合法 JSON：%s", tool.name, tool.parameters);
+		if (parsed) parsed.free();
+	}
 }
 
 fn void test_bash_echo() @test

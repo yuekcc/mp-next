@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "目录路径（默认当前目录）"
+    },
+    "limit": {
+      "type": "number",
+      "description": "最多返回条目数（默认 500，<=0 不限制）"
+    }
+  },
+  "required": []
+}

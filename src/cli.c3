@@ -1,6 +1,7 @@
 module llmcli::cli;
 
 import std::io;
+import std::time::datetime;
 import llmcli::buf;
 
 // 退出码约定（PRD 已确认细分）
@@ -32,6 +33,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
   --max-turns <n>          最多发起 n 次请求（n>0 生效）；不给或 <=0 表示不设上限
   --system-prompt <text>   系统提示词（与 --system-prompt-file 互斥）
   --system-prompt-file <f> 系统提示词文件
+                           两者都不给时用内置默认提示词（src/system_prompt.md）；
+                           三种来源都支持 {{date}} / {{cwd}} / {{os}} 占位符
   --list-sessions          列出已有会话（id、更新时间、消息数），随后退出
   --quiet                  stderr 只保留错误
   --debug                  stderr 额外打印原始请求/响应（密钥已脱敏）
@@ -113,6 +116,35 @@ fn bool take_value(String[] args, usz* i, String flag, String inline_value,
 	*i += 1;
 	*out = args[*i];
 	return true;
+}
+
+fn String host_os()
+{
+	$switch:
+	$case env::WIN32:
+		return "Windows";
+	$case env::MACOS:
+		return "macOS";
+	$default:
+		return "Linux";
+	$endswitch
+}
+
+// 系统提示词里的环境占位符：默认提示词与 --system-prompt / --system-prompt-file 通用。
+// 结果总是 mem 上的新串，与 --input-file 读入的 user_input 一样由调用方持有。
+fn String expand_prompt_placeholders(String text)
+{
+	String date = datetime::now().to_local().format(tmem, DateTimeFormat.DATEONLY);
+	String cwd = ".";
+	if (try found = path::tcwd()) cwd = (String)found;
+
+	// 复用 std 的 DString.replace（就地替换、自动扩容）。占位符全是 ASCII，
+	// 字节级匹配不会命中多字节 UTF-8 字符内部，未命中部分按字节原样搬运。
+	DString out = dstring::new(tmem, text);
+	out.replace("{{date}}", date);
+	out.replace("{{cwd}}", cwd);
+	out.replace("{{os}}", host_os());
+	return out.copy_str(mem);
 }
 
 fn ParseResult parse(String[] args)
@@ -203,7 +235,8 @@ fn ParseResult parse(String[] args)
 	}
 	if (o.system_prompt_file.len)
 	{
-		char[]? data = file::load(mem, o.system_prompt_file);
+		// 读进来后统一走 expand_prompt_placeholders 复制到 mem，这里用 tmem 不留中间缓冲
+		char[]? data = file::load(tmem, o.system_prompt_file);
 		if (catch err = data)
 		{
 			res.error = string::tformat("无法读取 --system-prompt-file %s（%s）",
@@ -271,5 +304,10 @@ fn ParseResult parse(String[] args)
 		res.error = "输入为空";
 		return res;
 	}
+
+	// 系统提示词：没给就用编译期嵌入的默认提示词（src/system_prompt.md），再展开环境占位符。
+	// 放在最后，让参数错误路径不产生 mem 分配。
+	if (!o.system_prompt.len) o.system_prompt = $embed("system_prompt.md");
+	o.system_prompt = expand_prompt_placeholders(o.system_prompt);
 	return res;
 }

@@ -34,7 +34,8 @@ llmcli --list-sessions
 - **全量落盘**：user / assistant / tool 三类消息都存，工具输出原样入库，不截断。
 - assistant 消息的 `reasoning_content`（思维链，DeepSeek 等模型会返回）**原样保存**；
   组装下一次请求时会被剥离，不会回传给端点。
-- 系统提示词（`--system-prompt` / `--system-prompt-file`）不入库，每次运行由 flag 重新给。
+- 系统提示词（`--system-prompt` / `--system-prompt-file`；都不给时用内置默认提示词 `src/system_prompt.md`）
+  不入库，每次运行重新注入。
 
 ## 手动清理
 

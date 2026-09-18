@@ -41,3 +41,5 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 ## 注意
 
 内置 Bash 工具默认放行任意命令，提示注入或模型误判可导致任意代码执行（每次调用的命令原文会打印到 stderr 供审计）。默认不设 turn 上限与超时，失控时用 Ctrl+C 中断或加 `--max-turns <n>`。
+
+Bash 工具在所有平台都经 `bash -c` 执行。Windows 上要求安装 Git for Windows（自动探测常见安装位置，找不到时回退到 PATH 里的 `bash`）。

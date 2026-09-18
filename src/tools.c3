@@ -1,6 +1,6 @@
 module llmcli::tools;
 
-import std::io, std::io::path, std::os::process, std::thread, std::sort, std::time, std::collections::list, libc;
+import std::io, std::io::path, std::os::env, std::os::process, std::thread, std::sort, std::time, std::collections::list, libc;
 import cjson;
 import llmcli::buf, llmcli::log;
 
@@ -126,7 +126,7 @@ fn void on_interrupt(int sig)
 // 中断时先杀掉正在跑的子进程再退出，避免留下孤儿进程把 CI job 拖住。
 // Windows：Ctrl+C 走 SIGINT，Ctrl+Break 走 CRT 的 SIGBREAK（不是 SIGTERM）。
 // POSIX：Ctrl+C 走 SIGINT，CI 的 timeout 默认发 SIGTERM。
-// ponytail: 只 terminate 直接子进程（cmd.exe / sh）。终端里的 Ctrl+C 会由控制台把事件
+// ponytail: 只 terminate 直接子进程（bash）。终端里的 Ctrl+C 会由控制台把事件
 // 发给整个进程组，孙进程（如 ping）同样会收到；只有程序化发信号（CI）才可能漏掉孙进程。
 // 要彻底覆盖得上 Windows Job Object / POSIX 进程组 kill，v1 不做。
 fn void install_interrupt_handler()
@@ -166,21 +166,48 @@ fn int read_stream_worker(void* arg)
 // 便于模型在需要时读取完整结果。
 const usz BASH_LINE_LIMIT = 2000;
 
+// 定位 bash：各平台统一用 bash 执行。Git for Windows 默认只把 Git\cmd 加进 PATH（不含 bash.exe），
+// 所以 Windows 先按常见安装位置探测，找不到再退回 PATH 里的 bash。
+// ponytail: 退回的若是 WSL 的 System32\bash.exe，命令会跑在 WSL 环境而非当前文件系统；
+// 要排除它得解析 PATH 找到的实际路径，暂时不做。
+fn String find_bash()
+{
+	$if env::WIN32:
+		String[] env_names = { "ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA" };
+		String[] rel_paths = {
+			"\\Git\\bin\\bash.exe",
+			"\\Git\\bin\\bash.exe",
+			"\\Programs\\Git\\bin\\bash.exe",
+		};
+		for (usz i = 0; i < env_names.len; i++)
+		{
+			if (try root = env::tget_var(env_names[i]))
+			{
+				String exe = string::tformat("%s%s", root, rel_paths[i]);
+				if (try p = path::new(tmem, exe))
+				{
+					if (path::exists(p)) return exe;
+				}
+			}
+		}
+	$endif
+	return "bash";
+}
+
 fn ToolResult bash_run(String command)
 {
 	log::info("[bash] %s", command);
 
-	String[] command_line;
-	$if env::WIN32:
-		command_line = { "cmd.exe", "/C", command };
-	$else
-		command_line = { "/bin/sh", "-c", command };
-	$endif
-
-	// INHERIT_ENV 必须开：c3 的 process::spawn 在不指定环境时给子进程一个空环境块，
-	// 没有 PATH 连 ping/ls 这类外部命令都找不到。
+	// 统一经 `bash -c` 执行（Windows 上是 Git Bash）。INHERIT_ENV 必须开：c3 的 process::spawn
+	// 在不指定环境时给子进程一个空环境块，没有 PATH 连 ping/ls 这类外部命令都找不到。
+	String bash = find_bash();
+	String[] command_line = { bash, "-c", command };
 	Process? spawned = process::spawn(command_line, SpawnOptions.INHERIT_ENV);
-	if (catch err = spawned) return fail(string::tformat("启动子进程失败：%s", err));
+	if (catch err = spawned)
+	{
+		return fail(string::tformat("启动 bash 失败（%s）：%s（需要系统已安装 bash，Windows 上为 Git for Windows）",
+		                            bash, err));
+	}
 	Process* process = &spawned;
 	defer (void)process.destroy();
 
@@ -492,57 +519,36 @@ fn void register_builtin_tools()
 {
 	register_tool({
 		.name = "bash",
-		.description = "在用户机器上执行一条 shell 命令，回填 stdout/stderr 与退出码。"
-		               "输出截断到末 2000 行，截断前完整输出落盘到临时文件。Windows 下经 cmd.exe /C，"
-		               "其它平台经 /bin/sh -c。",
-		.parameters =
-			`{"type":"object","properties":{"command":{"type":"string","description":"要执行的命令"}},` +++
-			`"required":["command"]}`,
+		.description = "在用户机器上执行一条 bash 命令，回填 stdout/stderr 与退出码。"
+		               "输出截断到末 2000 行，截断前完整输出落盘到临时文件。各平台统一经 bash -c 执行，"
+		               "Windows 上使用 Git Bash。",
+		.parameters = $embed("tool_schemas/bash.json"),
 		.execute = &tool_bash,
 	});
 	register_tool({
 		.name = "edit_file",
 		.description = "把文件中的一段文本精确替换成另一段。old_string 必须精确匹配（含空白与换行）。"
 		               "默认要求唯一匹配，出现多次会报错且不修改；设 allow_multiple=true 可替换全部。",
-		.parameters =
-			`{"type":"object","properties":{` +++
-			`"path":{"type":"string","description":"目标文件路径"},` +++
-			`"old_string":{"type":"string","description":"要被替换的原文（需精确匹配）"},` +++
-			`"new_string":{"type":"string","description":"替换后的新文本"},` +++
-			`"allow_multiple":{"type":"boolean","description":"true 时替换全部匹配，默认 false（要求唯一）"}},` +++
-			`"required":["path","old_string","new_string"]}`,
+		.parameters = $embed("tool_schemas/edit_file.json"),
 		.execute = &tool_edit_file,
 	});
 	register_tool({
 		.name = "read_file",
 		.description = "读取一个文本文件并按行回填（行号前缀便于定位）。大文件用 offset/limit 分页。",
-		.parameters =
-			`{"type":"object","properties":{` +++
-			`"path":{"type":"string","description":"文件路径"},` +++
-			`"offset":{"type":"number","description":"起始行（1-based，默认从头）"},` +++
-			`"limit":{"type":"number","description":"最多读取行数（默认全部）"}},` +++
-			`"required":["path"]}`,
+		.parameters = $embed("tool_schemas/read_file.json"),
 		.execute = &tool_read_file,
 	});
 	register_tool({
 		.name = "write_file",
 		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；自动创建父目录。",
-		.parameters =
-			`{"type":"object","properties":{` +++
-			`"path":{"type":"string","description":"文件路径"},` +++
-			`"content":{"type":"string","description":"要写入的内容"}},` +++
-			`"required":["path","content"]}`,
+		.parameters = $embed("tool_schemas/write_file.json"),
 		.execute = &tool_write_file,
 	});
 	register_tool({
 		.name = "list_dir",
 		.description = "列举目录内容：目录在前、文件在后各按名排序，文件附大小；末行输出 Summary。"
 		               "默认最多 500 条，可用 limit 调整（<=0 不限制）。",
-		.parameters =
-			`{"type":"object","properties":{` +++
-			`"path":{"type":"string","description":"目录路径（默认当前目录）"},` +++
-			`"limit":{"type":"number","description":"最多返回条目数（默认 500，<=0 不限制）"}},` +++
-			`"required":[]}`,
+		.parameters = $embed("tool_schemas/list_dir.json"),
 		.execute = &tool_list_dir,
 	});
 }

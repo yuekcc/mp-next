@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "文件路径"
+    },
+    "content": {
+      "type": "string",
+      "description": "要写入的内容"
+    }
+  },
+  "required": ["path", "content"]
+}

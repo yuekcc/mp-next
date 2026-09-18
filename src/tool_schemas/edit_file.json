@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "目标文件路径"
+    },
+    "old_string": {
+      "type": "string",
+      "description": "要被替换的原文（需精确匹配）"
+    },
+    "new_string": {
+      "type": "string",
+      "description": "替换后的新文本"
+    },
+    "allow_multiple": {
+      "type": "boolean",
+      "description": "true 时替换全部匹配，默认 false（要求唯一）"
+    }
+  },
+  "required": ["path", "old_string", "new_string"]
+}

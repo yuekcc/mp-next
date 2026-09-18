@@ -90,7 +90,7 @@ fn int run(cli::Options* options)
 	if (persist)
 	{
 		store = session::open(options.session_id);
-		// 系统提示词不进会话文件，每次运行由 flag 重新给
+		// 系统提示词不进会话文件，每次运行重新注入（flag 或内置默认提示词）
 		foreach (message : session::load(mem, &store)) messages.push(message);
 	}
 	if (options.system_prompt.len)
