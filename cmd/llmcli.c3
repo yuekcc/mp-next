@@ -20,8 +20,9 @@ fn int list_sessions()
 
 fn int main(String[] args)
 {
-	cli::ParseResult parsed = cli::parse(args);
+	cli::ParseResult parsed = cli::resolve(args);
 	log::init(parsed.opts.quiet, parsed.opts.debug, parsed.opts.no_color);
+	log::add_secret(parsed.opts.api_key);
 
 	if (parsed.opts.help)
 	{
@@ -36,12 +37,6 @@ fn int main(String[] args)
 		return cli::EXIT_USAGE;
 	}
 	if (parsed.opts.list_sessions) return list_sessions();
-
-	if (!session::valid_id(parsed.opts.session_id) && parsed.opts.session_id.len)
-	{
-		log::error("--session-id 只能包含文件名安全字符，且不能含 ..");
-		return cli::EXIT_USAGE;
-	}
 
 	tools::install_interrupt_handler();
 	tools::register_builtin_tools();

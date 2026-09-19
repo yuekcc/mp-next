@@ -193,9 +193,9 @@ def s2_tool_loop(mock):
     if len(requests) >= 2:
         second = requests[1]
         roles = [m["role"] for m in second["messages"]]
-        check("S2 工具循环：第二次请求带 history+tool 回填",
-              roles == ["user", "assistant", "tool"], str(roles))
-        tool_message = second["messages"][2]
+        check("S2 工具循环：第二次请求带 system+history+tool 回填",
+              roles == ["system", "user", "assistant", "tool"], str(roles))
+        tool_message = second["messages"][-1]
         check("S2 工具循环：tool 消息含 tool_call_id 与实际输出",
               tool_message.get("tool_call_id") == "call_1"
               and "hello-from-tool" in (tool_message.get("content") or ""),

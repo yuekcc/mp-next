@@ -2,7 +2,7 @@ module llmcli::cli;
 
 import std::io;
 import std::time::datetime;
-import llmcli::buf;
+import llmcli::buf, llmcli::session;
 
 // 退出码约定（PRD 已确认细分）
 const int EXIT_OK = 0;           // 成功
@@ -26,7 +26,7 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 必备参数：
   --api-key <key>          API 密钥；不读环境变量兜底，缺失即用法错误
   --model <id>             模型 id
-  --api-url <url>          端点，默认 https://api.openai.com/v1/chat/completions
+  --api-url <url>          端点，默认 ` +++ DEFAULT_API_URL +++ `
 
 可选参数：
   --session-id <id>        会话 id；同一 id 跨调用累积历史
@@ -147,7 +147,9 @@ fn String expand_prompt_placeholders(String text)
 	return out.copy_str(mem);
 }
 
-fn ParseResult parse(String[] args)
+// 解析 flags 并补齐运行所需的一切：系统提示词与用户输入也在这里读取。
+// 注意有 I/O 副作用：stdin 是管道时会阻塞到 EOF，--input-file / --system-prompt-file 会读文件。
+fn ParseResult resolve(String[] args)
 {
 	ParseResult res;
 	Options* o = &res.opts;
@@ -227,6 +229,13 @@ fn ParseResult parse(String[] args)
 
 	// --help / --list-sessions 不需要 api-key、model 与输入
 	if (o.help || o.list_sessions) return res;
+
+	// session-id 会直接当文件名用，在读任何输入之前先挡住路径穿越与非法字符
+	if (o.session_id.len && !session::valid_id(o.session_id))
+	{
+		res.error = "--session-id 只能包含文件名安全字符，且不能含 ..";
+		return res;
+	}
 
 	if (o.system_prompt.len && o.system_prompt_file.len)
 	{

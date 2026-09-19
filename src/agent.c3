@@ -21,7 +21,7 @@ fn String build_request(cli::Options* options, Message[] messages, bool with_too
 	CJsonItem* array = cjson::create_array();
 	foreach (message : messages)
 	{
-		cjson::add_item_to_array(array, chat::message_to_json(&message, false));
+		cjson::add_item_to_array(array, chat::message_to_request_json(&message));
 	}
 	root.set_item("messages", array);
 	// 用 add_false_to_object 而不是 set("stream", false)：cJSON 的 cJSON_bool 是 int，
@@ -46,9 +46,9 @@ fn ChatResponse chat_once(cli::Options* options, Message[] messages, bool with_t
 	};
 
 	log::debug("POST %s", options.api_url);
-	log::debug("headers: Content-Type: application/json, Authorization: Bearer %s",
-	           log::mask_secret(options.api_key));
-	log::debug("request: %s", log::redact(buf::truncate(request_body, DEBUG_PREVIEW), options.api_key));
+	// 密钥由 log 统一脱敏（main 里 add_secret 注册过一次），这里直接打原文即可
+	log::debug("headers: Content-Type: application/json, Authorization: Bearer %s", options.api_key);
+	log::debug("request: %s", buf::truncate(request_body, DEBUG_PREVIEW));
 
 	http::HttpResponse res = http::http_post_json(options.api_url, headers, request_body);
 	if (res.error.len)

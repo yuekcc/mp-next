@@ -123,7 +123,7 @@ fn void test_message_json_roundtrip_keeps_reasoning_and_tool_calls() @test
 			.tool_calls = calls,
 		};
 
-		CJsonItem* json = chat::message_to_json(&original, true);
+		CJsonItem* json = chat::message_to_archive_json(&original);
 		defer json.free();
 		String printed = buf::cstr(tmem, cjson::print_unformatted(json));
 

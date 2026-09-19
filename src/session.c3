@@ -97,7 +97,7 @@ fn void append(Session* session, usz turn, Message[] messages)
 		CJsonItem* record = cjson::create_object();
 		record.set("ts", stamp);
 		record.set("turn", (int)turn);
-		record.set_item("message", chat::message_to_json(&message, true));
+		record.set_item("message", chat::message_to_archive_json(&message));
 		ZString line = cjson::print_unformatted(record);
 		payload.append_string(buf::cstr(tmem, line));
 		payload.append_bytes("\n");
@@ -165,13 +165,22 @@ fn SessionSummary[] list_all(Allocator allocator)
 			continue;
 		}
 		String[] lines = ((String)data).split(tmem, "\n", 0, true);
+		// ponytail: 元数据只看非空行：逐行数数、只解析最后一条非空行取 ts，不再全量 JSON 解析。
+		// 代价：手工掺入的非空坏行也会计入 count（append 写出的记录都是合法 JSON）。
 		foreach (line : lines)
 		{
-			CJsonItem* root = cjson::parse_with_length((ZString)line.ptr, line.len);
-			if (!root) continue;
-			if (try stamp = root.get_key_string("ts", allocator)) summary.updated = stamp;
-			summary.count++;
-			root.free();
+			if (line.len) summary.count++;
+		}
+		for (usz i = lines.len; i > 0; i--)
+		{
+			if (!lines[i - 1].len) continue;
+			CJsonItem* root = cjson::parse_with_length((ZString)lines[i - 1].ptr, lines[i - 1].len);
+			if (root)
+			{
+				if (try stamp = root.get_key_string("ts", allocator)) summary.updated = stamp;
+				root.free();
+			}
+			break;
 		}
 		list.push(summary);
 	}

@@ -31,7 +31,13 @@ struct ChatResponse
 
 // ---- 序列化 ---------------------------------------------------------------
 
-fn CJsonItem* message_to_json(Message* msg, bool include_reasoning)
+// 回传给端点的形态：reasoning_content 槽位为空（DeepSeek 等端点收到会报错）
+fn CJsonItem* message_to_request_json(Message* msg) => message_to_json(msg, false);
+
+// 会话存档的形态：带上 reasoning_content
+fn CJsonItem* message_to_archive_json(Message* msg) => message_to_json(msg, true);
+
+fn CJsonItem* message_to_json(Message* msg, bool include_reasoning) @private
 {
 	CJsonItem* obj = cjson::create_object();
 	obj.set("role", msg.role);
