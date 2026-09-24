@@ -1,6 +1,6 @@
 # 新增一个工具
 
-`llmcli` 内置 Bash、EditFile、ReadFile、WriteFile、ListDir 五个工具。工具经 `src/tools.c3` 里的注册表接入，**agent loop
+`llmcli` 内置 Bash、EditFile、ReadFile、WriteFile、ListDir 五个工具。工具源码在 `src/tools/`（一个工具一个文件），经 `src/tools/tools.c3` 里的注册表接入，**agent loop
 不需要任何改动**：注册表里有什么，LLM 就看得见什么。
 
 ## 工具接口
@@ -31,7 +31,7 @@ struct Tool
 
 ## 照抄示例：加一个 `grep` 工具
 
-假设要新增一个在文件里搜关键字的 `grep` 工具。在 `src/tools.c3` 里加一个实现函数：
+假设要新增一个在文件里搜关键字的 `grep` 工具。新建 `src/tools/grep.c3`（一个工具一个文件）加实现函数：
 
 ```c3
 fn ToolResult tool_grep(CJsonItem* args)
@@ -67,14 +67,15 @@ fn ToolResult tool_grep(CJsonItem* args)
 }
 ```
 
-在 `register_builtin_tools()` 里注册（schema 文件由 `$embed` 编译期嵌入，路径相对 `src/tools.c3`；
+在 `register_builtin_tools()` 里注册（schema 文件由 `$embed` 编译期嵌入，路径相对源文件，
+`src/tools/` 下的文件要用 `../tool_schemas/...`；
 `content` 必须用 `ok`/`fail` 构造）：
 
 ```c3
 	register_tool({
 		.name = "grep",
 		.description = "在文件里搜索包含指定模式的行。",
-		.parameters = $embed("tool_schemas/grep.json"),
+		.parameters = $embed("../tool_schemas/grep.json"),
 		.execute = &tool_grep,
 	});
 ```
