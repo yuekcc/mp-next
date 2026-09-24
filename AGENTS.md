@@ -1,32 +1,54 @@
-# Ponytail, lazy senior dev mode
+# llmcli
 
-You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
+面向 coding agent 的说明。本仓库是用 C3 写的单二进制 CLI，把 LLM 接进 shell 流水线。
 
-Before writing any code, stop at the first rung that holds:
+面向开发者的说明（构建、用法、参数、测试命令、风险提示）在 [README.md](README.md)，这里不重复。
+动手前先读 README，再读你真正要改的那几个文件。
 
-1. Does this need to be built at all? (YAGNI)
-2. Does it already exist in this codebase? Reuse the helper, util, or pattern that's already here, don't re-write it.
-3. Does the standard library already do this? Use it.
-4. Does a native platform feature cover it? Use it.
-5. Does an already-installed dependency solve it? Use it.
-6. Can this be one line? Make it one line.
-7. Only then: write the minimum code that works.
+## 工作原则：Ponytail, lazy senior dev
 
-The ladder runs after you understand the problem, not instead of it: read the task and the code it touches, trace the real flow end to end, then climb.
+Lazy = 高效，不是偷懒。最好的代码是没写出来的代码。
 
-Bug fix = root cause, not symptom: a report names a symptom. Grep every caller of the function you touch and fix the shared function once — one guard there is a smaller diff than one per caller, and patching only the path the ticket names leaves a sibling caller still broken.
+下手写之前，从下往上停在第一个成立的档位：
 
-Rules:
+1. 这东西真的要建吗？（YAGNI）
+2. 仓库里已经有了吗？复用现成的 helper / util / 写法，别重写。
+3. 标准库能做吗？
+4. 平台原生能力能覆盖吗？
+5. 已装的依赖能解决吗？
+6. 能不能一行搞定？
+7. 都不行，才写最小可用实现。
 
-- No abstractions that weren't explicitly requested.
-- No new dependency if it can be avoided.
-- No boilerplate nobody asked for.
-- Deletion over addition. Boring over clever. Fewest files possible.
-- Shortest working diff wins, but only once you understand the problem. The smallest change in the wrong place isn't lazy, it's a second bug.
-- Question complex requests: "Do you actually need X, or does Y cover it?"
-- Pick the edge-case-correct option when two stdlib approaches are the same size, lazy means less code, not the flimsier algorithm.
-- Mark deliberate simplifications that cut a real corner with a known ceiling (global lock, O(n²) scan, naive heuristic) with a `ponytail:` comment naming the ceiling and upgrade path.
+爬这个梯子必须在读懂问题之后：先读完任务、把真实调用链走一遍，再选档位。没读懂就改的小 diff 不是 lazy，是第二个 bug。
 
-Not lazy about: understanding the problem (read it fully and trace the real flow before picking a rung, a small diff you don't understand is just laziness dressed up as efficiency), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
+修 bug 修根因：先 grep 你要改的函数的所有调用点，在公共处修一次——一处 guard 比每个调用点各补一个更小，也避免只修工单点名的那条路径、把兄弟调用点留在破损状态。
 
-(Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)
+规矩：
+
+- 不加没被要求的抽象、不加能躲开的依赖、不加没人要的样板。
+- 能删就不加；无聊好过巧妙；文件越少越好。
+- 两个 stdlib 方案一样长时，选边界情况更正确的那个：lazy 是少写代码，不是选更脆的算法。
+- 遇到复杂需求先反问："你真的要 X，还是 Y 就够了？"
+- 故意走的捷径（固定槽位、只终止直接子进程、O(n²) 扫描、朴素启发式……）用 `ponytail:` 注释标明天花板和升级路径。
+
+不能懒的地方：读懂问题、信任边界的输入校验、防丢数据的错误处理、安全、可访问性、真实硬件的标定，以及任何被明确要求的东西。非平凡逻辑要留一个能跑的检查——一个基于 assert 的小 demo/自测或一个小的测试文件，不引入框架和 fixture，逻辑坏了它就会失败。一行代码不需要测试。
+
+（本文件同样约束在 ponytail 仓库里干活的 agent，尤其是它们。）
+
+## 本仓库的额外约定
+
+- **PRD 是决策依据**：`docs/prds/001.md` 里标注「已确认」的决策不要擅自推翻；超时、输出截断、失败阈值、流式输出、多 provider 协议明确属于后续范围，别顺手加进来。
+- **协议字段查参考资料**：改请求/响应解析前查 `docs/references/chat-completion-api.md`（接口原文，近 5000 行），不要凭记忆写字段名。
+- **平台范围**：v1 只在 Windows/x64 上验证，Linux 是兼容目标而非验证目标；`lib/*.c3l` 只带了 windows-x64 的预编译库，别指望在别的平台上能直接链上。
+- **`scripts/mock_llm.py` 是回归用的假端点**：一个本地 OpenAI chat completions 服务，只实现 `POST /v1/chat/completions` 与 `GET /health`，响应按"脚本"逐轮回放（脚本用完后重复最后一条）。它能脚本化地造出多轮 `tool_calls`、思维链、非法 JSON、500、空答案、未知工具等模型行为，也能用 `--script <file.json>` 喂自定义脚本、`--replace k=v` 替换脚本里的占位串——复现某种 LLM 行为请在这里加 scenario，不要改回归脚本去适配。
+- **端到端回归不碰真实端点**：`scripts/regress.py` 会自己拉起上面的 mock（并额外用 `/control/reset`、`/control/requests` 重置与回收请求记录），不需要 API key，可以放心跑。
+- **行为变更要连着文档一起改**：flag、退出码、默认行为一改，`src/cli.c3` 里的 `HELP`、`README.md` 与 `docs/` 都要同步——`--help` 就是这个 CLI 的产品文档。
+- **新增工具**：照 `docs/tools.md` 做（一个工具一个文件 + `src/tool_schemas/*.json` + 注册表），agent loop 不需要动。
+- **`tmp/` 是草稿区**：里面的 md 是需求初稿和随手记录，不是规格，别当依据。
+- **提交信息**沿用仓库现有风格：简短一句话，中文为主。
+
+## 改完自查
+
+1. 编译与测试通过（命令见 README）。
+2. 端到端回归通过（离线 mock，见上）。
+3. 改了 CLI 行为 → `--help` / README / docs 已同步。

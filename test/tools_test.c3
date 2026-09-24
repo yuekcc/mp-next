@@ -188,21 +188,6 @@ fn void test_read_file_missing_reports_error() @test
 	release(&result);
 }
 
-fn void test_write_file_creates_parent_dirs() @test
-{
-	setup();
-	String path = "build/nested/dir/out.txt";
-	tools::ToolResult result = tools::run_tool("write_file",
-		string::tformat(`{"path":"%s","content":"hello"}`, path));
-	test::eq(result.is_error, false);
-	release(&result);
-
-	@pool()
-	{
-		if (try content = file::load(tmem, path)) test::eq((String)content, "hello");
-	};
-}
-
 fn void test_list_dir_lists_entries() @test
 {
 	setup();

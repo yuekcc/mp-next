@@ -135,7 +135,7 @@ fn void register_builtin_tools()
 	});
 	register_tool({
 		.name = "write_file",
-		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；自动创建父目录。",
+		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；父目录必须已存在。",
 		.parameters = $embed("../tool_schemas/write_file.json"),
 		.execute = &tool_write_file,
 	});

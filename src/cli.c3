@@ -1,6 +1,7 @@
 module llmcli::cli;
 
 import std::io;
+import std::core::mem::allocators;
 import std::time::datetime;
 import llmcli::buf, llmcli::session;
 
@@ -302,10 +303,12 @@ fn ParseResult resolve(String[] args)
 	}
 	else
 	{
-		buf::ByteBuf raw;
+		// 管道输入可长，LIBC_ALLOCATOR 脱离 @pool；读失败按 EOF 处理（?? 吞掉错误，保留已读部分）。
+		DString raw;
+		raw.init(&allocators::LIBC_ALLOCATOR);
 		defer raw.free();
-		buf::read_all(io::stdin(), &raw);
-		o.user_input = raw.to_string(mem);
+		raw.read_from_stream(io::stdin()) ?? 0;
+		o.user_input = raw.copy_str(mem);
 	}
 
 	if (!o.user_input.len)

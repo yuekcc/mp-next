@@ -1,8 +1,9 @@
 module llmcli::tools;
 
 import std::io, std::io::path, std::os::env, std::os::process, std::thread, std::time, libc;
+import std::core::mem::allocators;
 import cjson;
-import llmcli::buf, llmcli::log;
+import llmcli::log;
 
 // 当前运行中的子进程，供中断处理器终止，避免留下孤儿进程。
 // 不能是 tlocal：Windows 上信号处理器跑在另一个线程。
@@ -33,7 +34,7 @@ fn void install_interrupt_handler()
 struct StreamReader
 {
 	Process* process;
-	buf::ByteBuf* out;
+	DString* out;
 	bool want_stderr;
 }
 
@@ -47,7 +48,7 @@ fn int read_stream_worker(void* arg)
 			? (reader.process.read_stderr(&chunk, (sz)chunk[..].len) ?? -1)
 			: (reader.process.read_stdout(&chunk, (sz)chunk[..].len) ?? -1);
 		if (n <= 0) break;
-		if (!reader.out.append(chunk[:n])) break;
+		reader.out.append_bytes(chunk[:n]);
 	}
 	return 0;
 }
@@ -113,9 +114,13 @@ fn ToolResult bash_run(String command)
 		process.stdin_file = null;
 	}
 
-	buf::ByteBuf out;
-	buf::ByteBuf err;
+	// 输出可能从 stderr 工作线程增长，必须绑 LIBC_ALLOCATOR（脱离 @pool/context），
+	// 且在线程启动前 init，避免 DString 零值惰性初始化落到工作线程的 tmem 上。
+	DString out;
+	out.init(&allocators::LIBC_ALLOCATOR);
 	defer out.free();
+	DString err;
+	err.init(&allocators::LIBC_ALLOCATOR);
 	defer err.free();
 
 	// stdout 在本线程读，stderr 交给工作线程：两边都不堵管道才不会互相死锁。
@@ -136,11 +141,11 @@ fn ToolResult bash_run(String command)
 
 	// 合并 stdout + stderr 为单一输出流（按源 Bash 的"全部输出"语义）。
 	DString combined = dstring::new(tmem);
-	combined.append(out.to_string(tmem));
-	if (err.len)
+	combined.append(out.str_view());
+	if (err.len())
 	{
 		if (!combined.str_view().ends_with("\n")) combined.append("\n");
-		combined.append(err.to_string(tmem));
+		combined.append(err.str_view());
 	}
 	if (!combined.str_view().ends_with("\n")) combined.append("\n");
 
