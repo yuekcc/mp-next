@@ -378,6 +378,80 @@ def s2_unknown_tool(mock):
         server.stop()
 
 
+def s2_fragmented_tool():
+    """AC: 兼容端点把一次调用拆成分片（靠 index 关联）时，客户端归并后正确执行。"""
+    work = os.path.join(WORK, "frag")
+    os.makedirs(work, exist_ok=True)
+    # 分片里嵌的是 JSON 字符串，路径反斜杠必须先转义（json.dumps 后去掉首尾引号）
+    escaped = json.dumps(work)[1:-1]
+    server = Mock("fragmented_tool", replace={"{{DIR}}": escaped}, port=PORT + 11)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="列出当前目录")
+        check("S2 分片 tool_calls：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 分片 tool_calls：stdout 只有最终答案",
+              proc.stdout.strip() == "done listing", repr(proc.stdout))
+        check("S2 分片 tool_calls：没有把分片当独立工具（无未知工具回填）",
+              "未知工具" not in proc.stderr, repr(proc.stderr[-800:]))
+
+        requests = server.requests()
+        if len(requests) >= 2:
+            assistant = [m for m in requests[1]["messages"] if m.get("role") == "assistant"]
+            calls = assistant[0].get("tool_calls", []) if assistant else []
+            check("S2 分片 tool_calls：归并后只剩 1 个调用", len(calls) == 1,
+                  json.dumps(calls, ensure_ascii=False))
+            if len(calls) == 1:
+                fn = calls[0].get("function", {})
+                args = json.loads(fn.get("arguments") or "{}")
+                check("S2 分片 tool_calls：name 与 arguments 正确还原",
+                      fn.get("name") == "list_dir" and os.path.normpath(args.get("path", "")) == work,
+                      json.dumps(calls[0], ensure_ascii=False))
+            tools = [m for m in requests[1]["messages"] if m.get("role") == "tool"]
+            check("S2 分片 tool_calls：只回填 1 条 tool 消息且带 tool_call_id",
+                  len(tools) == 1 and tools[0].get("tool_call_id") == "call_1"
+                  and "Summary" in (tools[0].get("content") or ""),
+                  json.dumps(tools, ensure_ascii=False))
+        else:
+            check("S2 分片 tool_calls：发起了第二轮请求", False, "只有 %d 次请求" % len(requests))
+    finally:
+        server.stop()
+
+
+def s2_parallel_fragmented():
+    """AC: 多个并行调用各自分片时，按 index 独立归并，互不串联。"""
+    server = Mock("parallel_fragmented", port=PORT + 12)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="并行跑两个命令")
+        check("S2 并行分片：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 并行分片：stdout 只有最终答案",
+              proc.stdout.strip() == "done parallel", repr(proc.stdout))
+
+        requests = server.requests()
+        if len(requests) >= 2:
+            assistant = [m for m in requests[1]["messages"] if m.get("role") == "assistant"]
+            calls = assistant[0].get("tool_calls", []) if assistant else []
+            check("S2 并行分片：归并成 2 个调用", len(calls) == 2,
+                  json.dumps(calls, ensure_ascii=False))
+            if len(calls) == 2:
+                args = [json.loads(c["function"].get("arguments") or "{}") for c in calls]
+                check("S2 并行分片：两边 arguments 各自完整、未串联",
+                      args[0].get("command") == "echo A" and args[1].get("command") == "echo B",
+                      json.dumps(args, ensure_ascii=False))
+            tools = [m for m in requests[1]["messages"] if m.get("role") == "tool"]
+            contents = {m.get("tool_call_id"): (m.get("content") or "") for m in tools}
+            check("S2 并行分片：两条 tool 结果按 id 正确对应",
+                  len(tools) == 2 and "echo A" in contents.get("call_a", "")
+                  and "A" in contents.get("call_a", "") and "B" in contents.get("call_b", ""),
+                  json.dumps(tools, ensure_ascii=False))
+        else:
+            check("S2 并行分片：发起了第二轮请求", False, "只有 %d 次请求" % len(requests))
+    finally:
+        server.stop()
+
+
 def s4_ci_hygiene(mock):
     """AC: 输出非终端时不出现 ANSI 颜色；stdout 可重定向。"""
     mock.reset()
@@ -541,6 +615,8 @@ def main():
         s3_reasoning(mock)
         s2_unknown_tool(mock)
         s2_bad_arguments()
+        s2_fragmented_tool()
+        s2_parallel_fragmented()
         s4_ci_hygiene(mock)
         s2_interrupt()
         s5_max_turns()

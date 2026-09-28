@@ -35,6 +35,66 @@ fn void test_parse_tool_calls() @test
 	};
 }
 
+// 分片形态：一次调用被拆成多元素、name/arguments 分散、靠 index=0 关联。
+fn void test_parse_merges_fragmented_tool_call() @test
+{
+	@pool()
+	{
+		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
+		              `{"id":"call_1","type":"function","index":0,` +++
+		              `"function":{"name":"list_dir","arguments":""}},` +++
+		              `{"index":0,"function":{"arguments":"{\"path\": \""}},` +++
+		              `{"index":0,"function":{"arguments":"Z:\\\\proj"}},` +++
+		              `{"index":0,"function":{"arguments":"\"}"}}]},` +++
+		              `"finish_reason":"tool_calls"}]}`;
+		ChatResponse parsed = chat::parse_response(tmem, body);
+		test::eq(parsed.ok, true);
+		test::eq((int)parsed.tool_calls.len, 1);
+		test::eq(parsed.tool_calls[0].name, "list_dir");
+		test::eq(parsed.tool_calls[0].arguments, `{"path": "Z:\\proj"}`);
+	};
+}
+
+// 并行分片：两个 index 各自归并，互不串联。
+fn void test_parse_merges_parallel_fragmented_tool_calls() @test
+{
+	@pool()
+	{
+		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
+		              `{"id":"call_a","index":0,"function":{"name":"bash","arguments":"{\"comm"}},` +++
+		              `{"id":"call_b","index":1,"function":{"name":"bash","arguments":"{\"comm"}},` +++
+		              `{"index":0,"function":{"arguments":"and\": \"echo A\"}"}},` +++
+		              `{"index":1,"function":{"arguments":"and\": \"echo B\"}"}}]},` +++
+		              `"finish_reason":"tool_calls"}]}`;
+		ChatResponse parsed = chat::parse_response(tmem, body);
+		test::eq(parsed.ok, true);
+		test::eq((int)parsed.tool_calls.len, 2);
+		test::eq(parsed.tool_calls[0].id, "call_a");
+		test::eq(parsed.tool_calls[0].arguments, `{"command": "echo A"}`);
+		test::eq(parsed.tool_calls[1].id, "call_b");
+		test::eq(parsed.tool_calls[1].arguments, `{"command": "echo B"}`);
+	};
+}
+
+// 非流式的并行完整调用没有 index，必须保持逐元素语义，不能被错误归并。
+fn void test_parse_keeps_indexless_parallel_tool_calls() @test
+{
+	@pool()
+	{
+		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
+		              `{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo A\"}"}},` +++
+		              `{"id":"call_b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo B\"}"}}]},` +++
+		              `"finish_reason":"tool_calls"}]}`;
+		ChatResponse parsed = chat::parse_response(tmem, body);
+		test::eq(parsed.ok, true);
+		test::eq((int)parsed.tool_calls.len, 2);
+		test::eq(parsed.tool_calls[0].id, "call_a");
+		test::eq(parsed.tool_calls[1].id, "call_b");
+		test::eq(parsed.tool_calls[0].arguments, `{"command":"echo A"}`);
+		test::eq(parsed.tool_calls[1].arguments, `{"command":"echo B"}`);
+	};
+}
+
 fn void test_parse_captures_reasoning_and_usage() @test
 {
 	@pool()

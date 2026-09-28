@@ -24,6 +24,9 @@
     bad_json    返回非法 JSON
     http_500    返回 500
     no_answer   返回 finish_reason=stop 但 content 为空
+    unknown_tool  调用不存在的工具
+    fragmented_tool        一次调用被拆成多元素、靠 index 关联（hy3 等兼容端点）
+    parallel_fragmented    多个并行调用各自被拆成多元素、靠 index 关联
 """
 
 import argparse
@@ -114,6 +117,55 @@ SCENARIOS = {
         },
     ],
 }
+
+# 兼容端点偶发把一次调用拆成多元素、name/arguments 分散其中、靠 index 关联的形态。
+# 用 __raw__（对象）直接回放：高层脚本会把 arguments 序列化成完整 JSON，无法表达分片。
+_FRAGMENTED_TOOL_TURNS = {
+    "fragmented_tool": [
+        {"__raw__": {
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "index": 0,
+                "message": {
+                    "content": "现调用 list_dir：",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function", "index": 0,
+                         "function": {"name": "list_dir", "arguments": ""}},
+                        {"index": 0, "function": {"arguments": "{\"path\": \""}},
+                        {"index": 0, "function": {"arguments": "{{DIR}}"}},
+                        {"index": 0, "function": {"arguments": "\"}"}},
+                    ],
+                },
+            }],
+            "model": "hy3",
+        }},
+        {"finish_reason": "stop", "content": "done listing"},
+    ],
+    "parallel_fragmented": [
+        {"__raw__": {
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "index": 0,
+                "message": {
+                    "content": "两个工具并行调用：",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call_a", "type": "function", "index": 0,
+                         "function": {"name": "bash", "arguments": "{\"comm"}},
+                        {"id": "call_b", "type": "function", "index": 1,
+                         "function": {"name": "bash", "arguments": "{\"comm"}},
+                        {"index": 0, "function": {"arguments": "and\": \"echo A\"}"}},
+                        {"index": 1, "function": {"arguments": "and\": \"echo B\"}"}},
+                    ],
+                },
+            }],
+            "model": "hy3",
+        }},
+        {"finish_reason": "stop", "content": "done parallel"},
+    ],
+}
+SCENARIOS.update(_FRAGMENTED_TOOL_TURNS)
 
 
 def substitute(obj, mapping):
@@ -236,7 +288,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if "__raw__" in turn:
-            self._send(200, turn["__raw__"], raw=True)
+            # 原始报文可以是字符串，也可以是对象（写入前再做占位符替换与序列化）。
+            raw_body = substitute(turn["__raw__"], self.server.replace)
+            if not isinstance(raw_body, str):
+                raw_body = json.dumps(raw_body, ensure_ascii=False)
+            self._send(200, raw_body, raw=True)
             return
 
         echo_text = ""
