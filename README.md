@@ -36,7 +36,8 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 
 - [docs/tools.md](docs/tools.md) — 如何新增一个内置工具
 - [docs/sessions-and-ci.md](docs/sessions-and-ci.md) — 会话存储与 CI 集成
-- [docs/prds/001.md](docs/prds/001.md) — 产品需求文档
+- [docs/prds/001.md](docs/prds/001.md) — 产品需求文档（v1 基线）
+- [docs/prds/002.md](docs/prds/002.md) — 会话落盘语义修订（`turn`/`ts` 归属、逐 turn 落盘）
 
 ## 注意
 
