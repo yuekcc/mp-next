@@ -101,11 +101,12 @@ fn int run(cli::Options* options)
 	Message user = { .role = "user", .content = options.user_input };
 	messages.push(user);
 
-	// 本次 Trace 新增的消息，成功后一次性落盘
-	List{Message} fresh;
+	// 本次 Trace 新增的消息，成功后一次性落盘；turn 记产生它的那一轮，ts 记它发生的时刻。
+	// 用户输入是触发 turn 1 的输入，后续 assistant/tool 各记自己所在的那一轮。
+	List{session::Record} fresh;
 	fresh.init(mem);
 	defer fresh.free();
-	fresh.push(user);
+	fresh.push({ .message = user, .turn = 1, .ts = session::timestamp(mem) });
 
 	bool with_tools = tools::registry_len != 0;
 	String session_note = persist ? string::format(tmem, " session=%s", options.session_id) : "";
@@ -148,7 +149,7 @@ fn int run(cli::Options* options)
 				.tool_calls = response.tool_calls,
 			};
 			messages.push(assistant);
-			fresh.push(assistant);
+			fresh.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
 
 			foreach (call : response.tool_calls)
 			{
@@ -164,7 +165,7 @@ fn int run(cli::Options* options)
 					.content = result.content,
 				};
 				messages.push(tool_message);
-				fresh.push(tool_message);
+				fresh.push({ .message = tool_message, .turn = turn, .ts = session::timestamp(mem) });
 			}
 			continue LOOP;
 		}
@@ -177,8 +178,8 @@ fn int run(cli::Options* options)
 				.content = response.content,
 				.reasoning = response.reasoning,
 			};
-			fresh.push(assistant);
-			if (persist) session::append(&store, turn, fresh.to_array(mem));
+			fresh.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
+			if (persist) session::append(&store, fresh.to_array(mem));
 			log::info("Trace 结束，共 %d turn", turn);
 			return cli::EXIT_OK;
 		}

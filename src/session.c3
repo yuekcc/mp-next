@@ -37,6 +37,22 @@ struct Session
 	String path;
 }
 
+// 会话文件的一行：一条消息 + 它所属的 turn + 它发生的时刻。
+// user 消息是触发本次 Trace 的输入，属 turn 1；assistant/tool 属产生它的那一轮请求。
+struct Record
+{
+	Message message;
+	usz turn;
+	String ts;   // 消息发生的时刻（timestamp() 的产物），不是落盘那一刻
+}
+
+// 消息发生的时刻，格式就是记录里的 ts（本地时区 RFC3339，秒级）。
+// 在消息产生时取一次写进 Record，落盘时原样写入。
+fn String timestamp(Allocator allocator)
+{
+	return datetime::now().to_local().format(allocator, DateTimeFormat.RFC3339Z);
+}
+
 fn Session open(String id)
 {
 	Session session;
@@ -83,26 +99,28 @@ fn Message[] load(Allocator allocator, Session* session)
 }
 
 // 一次 Trace 的全部消息一次性追加。整块一次 write，避免并发写下多行交错。
+// turn 与 ts 都随每条记录传进来（消息产生时就记下），不整批共用一个值：同一次 Trace 里
+// 用户输入、工具回填、最终答案分属不同轮、不同时刻，共用一个值会把归属全写成最后一轮、
+// 把时间全写成落盘那一刻。
 // ponytail: 依赖 OS 的 append 语义保证单次写原子；跨机器共享目录场景没覆盖。
-fn void append(Session* session, usz turn, Message[] messages)
+fn void append(Session* session, Record[] records)
 {
-	if (!messages.len) return;
+	if (!records.len) return;
 
-	String stamp = datetime::now().to_local().format(tmem, DateTimeFormat.RFC3339Z);
 	DString payload = dstring::new(mem);
 	defer payload.free();
 
-	foreach (message : messages)
+	foreach (record : records)
 	{
-		CJsonItem* record = cjson::create_object();
-		record.set("ts", stamp);
-		record.set("turn", (int)turn);
-		record.set_item("message", chat::message_to_archive_json(&message));
-		ZString line = cjson::print_unformatted(record);
+		CJsonItem* item = cjson::create_object();
+		item.set("ts", record.ts);
+		item.set("turn", (int)record.turn);
+		item.set_item("message", chat::message_to_archive_json(&record.message));
+		ZString line = cjson::print_unformatted(item);
 		payload.append_string(buf::cstr(tmem, line));
 		payload.append_bytes("\n");
 		cjson::free(line);
-		record.free();
+		item.free();
 	}
 
 	String dir = sessions_dir(tmem);

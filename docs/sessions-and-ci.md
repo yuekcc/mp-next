@@ -32,6 +32,10 @@ llmcli --list-sessions
 ```
 
 - **全量落盘**：user / assistant / tool 三类消息都存，工具输出原样入库，不截断。
+- `ts` 是这条消息发生的时刻（本地时区 RFC3339，秒级），不是落盘那一刻：用户输入记本次运行开始，
+  assistant 记响应到达，tool 记工具跑完。
+- `turn` 是这条消息所属的那一轮请求：用户输入记 1，工具调用与其回填记发起它的那一轮，
+  最终答案记最后一次请求的轮次（与 stderr 每轮的 `[turn N]` 摘要编号一致）。
 - assistant 消息的 `reasoning_content`（思维链，DeepSeek 等模型会返回）**原样保存**；
   组装下一次请求时会被剥离，不会回传给端点。
 - 系统提示词（`--system-prompt` / `--system-prompt-file`；都不给时用内置默认提示词 `src/system_prompt.md`）

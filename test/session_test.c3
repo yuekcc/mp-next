@@ -4,6 +4,8 @@ import std::io, std::os::env;
 import llmcli::chat, llmcli::session;
 
 const String TEST_HOME = "build/test_session_home";
+// 固定时间戳：断言落盘内容时不受当前时钟影响
+const String FIXED_TS = "2026-09-29T20:00:00+08:00";
 
 fn void use_test_home() @private
 {
@@ -41,12 +43,12 @@ fn void test_append_and_load_roundtrip() @test
 
 	@pool()
 	{
-		Message[] batch = {
-			{ .role = "user", .content = "问题" },
-			{ .role = "assistant", .content = "回答", .reasoning = "思考过程" },
-			{ .role = "tool", .content = "工具输出", .tool_call_id = "call_1" },
+		session::Record[] batch = {
+			{ .message = { .role = "user", .content = "问题" }, .turn = 1, .ts = session::timestamp(tmem) },
+			{ .message = { .role = "assistant", .content = "回答", .reasoning = "思考过程" }, .turn = 1, .ts = session::timestamp(tmem) },
+			{ .message = { .role = "tool", .content = "工具输出", .tool_call_id = "call_1" }, .turn = 1, .ts = session::timestamp(tmem) },
 		};
-		session::append(&store, 1, batch);
+		session::append(&store, batch);
 	};
 
 	@pool()
@@ -61,6 +63,91 @@ fn void test_append_and_load_roundtrip() @test
 	};
 }
 
+// 每条记录保留自己的 turn：输入与它触发的工具回填记 1，最终答案记 2。
+// 逐行断言而不是全文子串——整批共用一个 turn 时，第一行就会红。
+fn void test_append_keeps_per_message_turn() @test
+{
+	use_test_home();
+	session::Session store = session::open("turns");
+	(void)file::save(store.path, "");
+
+	@pool()
+	{
+		session::Record[] batch = {
+			{ .message = { .role = "user", .content = "问" }, .turn = 1, .ts = FIXED_TS },
+			{ .message = { .role = "tool", .content = "工具输出", .tool_call_id = "call_1" }, .turn = 1, .ts = FIXED_TS },
+			{ .message = { .role = "assistant", .content = "答" }, .turn = 2, .ts = FIXED_TS },
+		};
+		session::append(&store, batch);
+	};
+
+	char[] data = file::load(tmem, store.path)!!;
+	// skip_empty：append 每条记录都以 \n 收尾，末尾空段不算一行
+	String[] lines = ((String)data).split(tmem, "\n", 0, true);
+	test::eq((int)lines.len, 3);
+	test::@check(lines[0].contains("\"turn\":1") && lines[0].contains("问"),
+	             "第 1 行（user）应记 turn 1，实际：%s", lines[0]);
+	test::@check(lines[1].contains("\"turn\":1") && lines[1].contains("工具输出"),
+	             "第 2 行（tool）应记 turn 1，实际：%s", lines[1]);
+	test::@check(lines[2].contains("\"turn\":2") && lines[2].contains("答"),
+	             "第 3 行（assistant）应记 turn 2，实际：%s", lines[2]);
+}
+
+// ts 是消息发生的时刻，按记录写入：整批共用一个落盘时间时，第 2 行就会红。
+fn void test_append_keeps_per_message_ts() @test
+{
+	use_test_home();
+	session::Session store = session::open("stamps");
+	(void)file::save(store.path, "");
+
+	@pool()
+	{
+		session::Record[] batch = {
+			{ .message = { .role = "user", .content = "问" }, .turn = 1,
+			  .ts = "2026-09-29T20:00:00+08:00" },
+			{ .message = { .role = "assistant", .content = "答" }, .turn = 2,
+			  .ts = "2026-09-29T20:00:07+08:00" },
+		};
+		session::append(&store, batch);
+	};
+
+	char[] data = file::load(tmem, store.path)!!;
+	String[] lines = ((String)data).split(tmem, "\n", 0, true);
+	test::eq((int)lines.len, 2);
+	test::@check(lines[0].contains("\"ts\":\"2026-09-29T20:00:00+08:00\""),
+	             "第 1 行应写记录自带的 ts，实际：%s", lines[0]);
+	test::@check(lines[1].contains("\"ts\":\"2026-09-29T20:00:07+08:00\""),
+	             "第 2 行应写记录自带的 ts，实际：%s", lines[1]);
+}
+
+// docs 承诺工具输出原样入库、不截断：64 KiB 内容要整条落盘并能原样读回。
+fn void test_append_keeps_large_content() @test
+{
+	use_test_home();
+	session::Session store = session::open("large");
+	(void)file::save(store.path, "");
+
+	@pool()
+	{
+		DString big = dstring::new(tmem);
+		big.append_string_repeat("0123456789abcdef", 4096);
+		session::Record[] batch = {
+			{ .message = { .role = "tool", .content = big.str_view(), .tool_call_id = "call_big" }, .turn = 1, .ts = FIXED_TS },
+		};
+		session::append(&store, batch);
+	};
+
+	@pool()
+	{
+		Message[] loaded = session::load(tmem, &store);
+		test::eq((int)loaded.len, 1);
+		test::eq((int)loaded[0].content.len, 16 * 4096);
+		test::eq(loaded[0].content[:16], "0123456789abcdef");
+		test::eq(loaded[0].content[32768:16], "0123456789abcdef");
+		test::eq(loaded[0].content[loaded[0].content.len - 16:16], "0123456789abcdef");
+	};
+}
+
 fn void test_broken_lines_are_skipped() @test
 {
 	use_test_home();
@@ -69,8 +156,8 @@ fn void test_broken_lines_are_skipped() @test
 
 	@pool()
 	{
-		Message[] batch = { { .role = "user", .content = "good" } };
-		session::append(&store, 1, batch);
+		session::Record[] batch = { { .message = { .role = "user", .content = "good" }, .turn = 1, .ts = FIXED_TS } };
+		session::append(&store, batch);
 	};
 	// 手动写入一行坏数据
 	@pool()
@@ -105,11 +192,11 @@ fn void test_list_all_reports_counts() @test
 	(void)file::save(store.path, "");
 	@pool()
 	{
-		Message[] batch = {
-			{ .role = "user", .content = "a" },
-			{ .role = "assistant", .content = "b" },
+		session::Record[] batch = {
+			{ .message = { .role = "user", .content = "a" }, .turn = 1, .ts = FIXED_TS },
+			{ .message = { .role = "assistant", .content = "b" }, .turn = 1, .ts = FIXED_TS },
 		};
-		session::append(&store, 1, batch);
+		session::append(&store, batch);
 	};
 
 	@pool()

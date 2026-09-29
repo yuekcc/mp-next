@@ -292,6 +292,12 @@ def s3_sessions(mock, verbose):
           str([r["message"]["role"] for r in records]))
     check("S3 每条记录都有 ts/turn/message",
           all({"ts", "turn", "message"} <= set(r) for r in records))
+    check("S3 turn 归属：输入与 turn 1 的工具消息记 1，最终答案记 2",
+          [r["turn"] for r in records] == [1, 1, 1, 2],
+          str([(r["message"]["role"], r["turn"]) for r in records]))
+    check("S3 系统提示词不入库（每次运行重新注入）",
+          all(r["message"]["role"] != "system" for r in records),
+          str([r["message"]["role"] for r in records]))
 
     second = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url,
                       "--session-id", "reg1"], stdin_text="第二问", home=home)
@@ -304,6 +310,15 @@ def s3_sessions(mock, verbose):
     check("S3 续话请求带新输入", "第二问" in contents, json.dumps(contents, ensure_ascii=False))
     check("S3 所有请求都不含 reasoning_content",
           all("reasoning_content" not in json.dumps(r) for r in requests))
+
+    with open(session_file, "r", encoding="utf-8") as fh:
+        after_resume = [json.loads(line) for line in fh if line.strip()]
+    check("S3 续话：已有记录原样保留（只追加、不重写）",
+          after_resume[:len(records)] == records,
+          "before=%d after=%d" % (len(records), len(after_resume)))
+    check("S3 续话：新一轮的 turn 从 1 重新计（与 stderr 的 [turn N] 一致）",
+          [r["turn"] for r in after_resume[len(records):]] == [1, 1],
+          str([(r["message"]["role"], r["turn"]) for r in after_resume]))
 
     # 追加一行坏数据，确认只警告不中断
     with open(session_file, "a", encoding="utf-8") as fh:
@@ -320,6 +335,50 @@ def s3_sessions(mock, verbose):
 
     if verbose:
         print("    (S3 records=%d stderr=%s)" % (len(records), second.stderr))
+
+
+def s3_turn_per_round(mock):
+    """AC: turn 记消息所在的那一轮；两轮工具调用的 Trace -> 1,1,1,2,2,3。"""
+    home = os.path.join(WORK, "turn_home")
+    shutil.rmtree(home, ignore_errors=True)
+    work = os.path.join(WORK, "work")
+    os.makedirs(work, exist_ok=True)
+    with open(os.path.join(work, "sample.txt"), "w", encoding="utf-8") as fh:
+        fh.write("line one\nold-text\nline three\n")
+
+    mock.reset()
+    proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url,
+                    "--session-id", "turns"], stdin_text="把 old-text 改成 new-text", home=home)
+    check("S3 多轮 turn：退出码 0", proc.returncode == 0, proc.stderr)
+
+    session_file = os.path.join(home, ".llmcli", "sessions", "turns.jsonl")
+    with open(session_file, "r", encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh if line.strip()]
+    check("S3 多轮 turn：两轮工具调用按 1,1,1,2,2,3 归属",
+          [r["turn"] for r in records] == [1, 1, 1, 2, 2, 3],
+          str([(r["message"]["role"], r["turn"]) for r in records]))
+
+
+def s3_timestamp_per_message():
+    """AC: ts 是消息发生的时刻，不是落盘那一刻。工具跑够 2 秒，首尾记录必须落在不同秒上。"""
+    home = os.path.join(WORK, "stamp_home")
+    shutil.rmtree(home, ignore_errors=True)
+    server = Mock("slow_command", replace={"{{SLEEP}}": "sleep 2"}, port=PORT + 11)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                        "--session-id", "stamps"], stdin_text="先睡两秒", home=home)
+        check("S3 ts 归属：退出码 0", proc.returncode == 0, proc.stderr)
+
+        session_file = os.path.join(home, ".llmcli", "sessions", "stamps.jsonl")
+        with open(session_file, "r", encoding="utf-8") as fh:
+            records = [json.loads(line) for line in fh if line.strip()]
+        stamps = [r["ts"] for r in records]
+        check("S3 ts 归属：工具前后的记录落在不同时刻（整批共用一个落盘时间就会红）",
+              len(set(stamps)) > 1,
+              str([(r["message"]["role"], r["ts"]) for r in records]))
+    finally:
+        server.stop()
 
 
 def s3_reasoning(mock):
@@ -612,6 +671,8 @@ def main():
         s2_tool_loop(mock)
         s2_error_paths(mock)
         s3_sessions(mock, args.verbose)
+        s3_turn_per_round(edit_mock)
+        s3_timestamp_per_message()
         s3_reasoning(mock)
         s2_unknown_tool(mock)
         s2_bad_arguments()
