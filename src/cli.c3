@@ -37,6 +37,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
                            两者都不给时用内置默认提示词（src/system_prompt.md）；
                            三种来源都支持 {{date}} / {{cwd}} / {{os}} 占位符
   --list-sessions          列出已有会话（id、更新时间、消息数），随后退出
+  --config-dir <dir>       配置目录（会话根目录），默认 %USERPROFILE%\.llmcli
+                           （Linux/macOS: ~/.llmcli）；不读任何环境变量
   --quiet                  stderr 只保留错误
   --debug                  stderr 额外打印原始请求/响应（密钥已脱敏）
   --no-color               关闭 stderr 颜色
@@ -60,7 +62,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
       写进 --system-prompt / --system-prompt-file，内容走 stdin 或 --input-file。
 
 会话存储：
-  默认 %USERPROFILE%\.llmcli\sessions\<id>.jsonl（可用 LLMCLI_HOME 覆盖根目录）。
+  默认 %USERPROFILE%\.llmcli\sessions\<id>.jsonl（Linux/macOS 为 ~/.llmcli），
+  根目录可用 --config-dir 覆盖；环境变量不参与决定存放位置。
   文件按行记录完整对话（含工具输出与 reasoning_content），每个 turn 完整结束即追加，
   所以中断或报错时已完成的 turn 已经在文件里；v1 不提供清理功能，
   请自行删除对应文件。落盘内容可能含敏感信息，注意存放位置。
@@ -88,6 +91,7 @@ struct Options
 	String input_file;
 	String prompt;
 	String user_input;
+	String config_dir;
 	int max_turns;   // 0 或负数 = 不设上限
 	bool quiet;
 	bool debug;
@@ -219,6 +223,7 @@ fn ParseResult resolve(String[] args)
 		if (name == "--system-prompt") slot = &o.system_prompt;
 		if (name == "--system-prompt-file") slot = &o.system_prompt_file;
 		if (name == "--input-file") slot = &o.input_file;
+		if (name == "--config-dir") slot = &o.config_dir;
 
 		if (!slot)
 		{

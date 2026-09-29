@@ -21,6 +21,7 @@ fn int list_sessions()
 fn int main(String[] args)
 {
 	cli::ParseResult parsed = cli::resolve(args);
+	session::set_config_dir(parsed.opts.config_dir);
 	log::init(parsed.opts.quiet, parsed.opts.debug, parsed.opts.no_color);
 	log::add_secret(parsed.opts.api_key);
 

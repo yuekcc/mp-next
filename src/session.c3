@@ -5,14 +5,23 @@ import std::collections::list;
 import cjson;
 import llmcli::buf, llmcli::chat, llmcli::log;
 
-const String HOME_ENV = "LLMCLI_HOME";
 const String SUFFIX = ".jsonl";
 
-// 会话根目录：LLMCLI_HOME 优先，否则 ~/.llmcli（Windows 为 %USERPROFILE%\.llmcli）
+// --config-dir 指定的配置目录，也就是会话根目录；空串 = 用默认 ~/.llmcli。
+// 只由 cmd 层在解析参数后设置一次，指向 argv 或常量内存（活到进程结束）。
+String config_dir @private;
+
+fn void set_config_dir(String dir)
+{
+	config_dir = dir;
+}
+
+// 会话根目录：--config-dir 优先，未指定则 ~/.llmcli（Windows 为 %USERPROFILE%\.llmcli）。
+// 不读环境变量：存放位置只由命令行决定。
 fn String root_dir(Allocator allocator)
 {
+	if (config_dir.len) return config_dir;
 	String home = env::get_home_dir(tmem) ?? ".";
-	if (try custom = env::get_var(tmem, HOME_ENV)) home = custom;
 	return string::format(allocator, "%s/.llmcli", home);
 }
 

@@ -10,12 +10,14 @@
 文件          <根目录>/sessions/<id>.jsonl
 ```
 
-`LLMCLI_HOME` 可以覆盖根目录：
+`--config-dir` 可以覆盖根目录（默认 `~/.llmcli`，Windows 为 `%USERPROFILE%\.llmcli`）：
 
 ```bash
-LLMCLI_HOME=./.local llmcli --session-id work --model ... --api-key ... "..."
-# 落到 ./.local/.llmcli/sessions/work.jsonl
+llmcli --config-dir ./.local --session-id work --model ... --api-key ... "..."
+# 落到 ./.local/sessions/work.jsonl
 ```
+
+存放位置只由命令行决定，不读任何环境变量。
 
 查看已有会话（stdout，一行一个）：
 

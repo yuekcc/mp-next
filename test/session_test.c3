@@ -9,7 +9,7 @@ const String FIXED_TS = "2026-09-29T20:00:00+08:00";
 
 fn void use_test_home() @private
 {
-	(void)env::set_var(session::HOME_ENV, TEST_HOME);
+	session::set_config_dir(TEST_HOME);
 }
 
 fn void test_session_id_validation() @test
@@ -30,9 +30,23 @@ fn void test_home_override_changes_path() @test
 	{
 		session::Session store = session::open("x");
 		test::@check(store.path.contains("test_session_home"),
-		             "LLMCLI_HOME 应改变会话路径，实际：%s", store.path);
+		             "--config-dir 应改变会话路径，实际：%s", store.path);
 		test::@check(store.path.ends_with("x.jsonl"), "文件名应以 id 命名，实际：%s", store.path);
 	};
+}
+
+// 存放位置只由 --config-dir 决定：旧环境变量不能再影响会话路径
+fn void test_env_var_no_longer_affects_path() @test
+{
+	(void)env::set_var("LLMCLI_HOME", "build/legacy_home");
+	session::set_config_dir("");
+	@pool()
+	{
+		session::Session store = session::open("x");
+		test::@check(!store.path.contains("legacy_home"),
+		             "不应再读 LLMCLI_HOME，实际：%s", store.path);
+	};
+	use_test_home();
 }
 
 fn void test_append_and_load_roundtrip() @test

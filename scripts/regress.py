@@ -85,10 +85,11 @@ class Mock:
 
 def run_cli(args, stdin_text=None, home=None, timeout=60, inherit_stdin=False):
     env = dict(os.environ)
-    env["LLMCLI_HOME"] = home or os.path.join(WORK, "home")
+    # 会话根目录只由 --config-dir 决定（不再读环境变量），每个场景一个隔离目录
+    config_dir = home or os.path.join(WORK, "home")
     kwargs = {"stdin": None} if inherit_stdin else {"input": stdin_text}
     proc = subprocess.run(
-        [exe_path()] + args,
+        [exe_path(), "--config-dir", config_dir] + args,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -280,7 +281,7 @@ def s3_sessions(mock, verbose):
                      "--session-id", "reg1"], stdin_text="第一问", home=home)
     check("S3 首次会话：退出码 0", first.returncode == 0, first.stderr)
 
-    session_file = os.path.join(home, ".llmcli", "sessions", "reg1.jsonl")
+    session_file = os.path.join(home, "sessions", "reg1.jsonl")
     check("S3 会话文件已创建", os.path.exists(session_file), session_file)
 
     records = []
@@ -351,7 +352,7 @@ def s3_turn_per_round(mock):
                     "--session-id", "turns"], stdin_text="把 old-text 改成 new-text", home=home)
     check("S3 多轮 turn：退出码 0", proc.returncode == 0, proc.stderr)
 
-    session_file = os.path.join(home, ".llmcli", "sessions", "turns.jsonl")
+    session_file = os.path.join(home, "sessions", "turns.jsonl")
     with open(session_file, "r", encoding="utf-8") as fh:
         records = [json.loads(line) for line in fh if line.strip()]
     check("S3 多轮 turn：两轮工具调用按 1,1,1,2,2,3 归属",
@@ -370,7 +371,7 @@ def s3_timestamp_per_message():
                         "--session-id", "stamps"], stdin_text="先睡两秒", home=home)
         check("S3 ts 归属：退出码 0", proc.returncode == 0, proc.stderr)
 
-        session_file = os.path.join(home, ".llmcli", "sessions", "stamps.jsonl")
+        session_file = os.path.join(home, "sessions", "stamps.jsonl")
         with open(session_file, "r", encoding="utf-8") as fh:
             records = [json.loads(line) for line in fh if line.strip()]
         stamps = [r["ts"] for r in records]
@@ -393,7 +394,7 @@ def s3_persist_per_turn():
                        stdin_text="一直调用工具", home=home)
         check("S3 逐 turn 落盘：未收敛时退出码 3", proc.returncode == 3, "exit=%d" % proc.returncode)
 
-        session_file = os.path.join(home, ".llmcli", "sessions", "persist.jsonl")
+        session_file = os.path.join(home, "sessions", "persist.jsonl")
         check("S3 逐 turn 落盘：没拿到最终答案也留下已完成的 turn",
               os.path.exists(session_file), session_file)
         records = []
@@ -428,7 +429,7 @@ def s3_persist_mid_trace():
     """AC: 落盘发生在 Trace 结束之前。turn 2 的工具去读会话文件，必须已经能看到 turn 1。"""
     home = os.path.join(WORK, "midtrace_home")
     shutil.rmtree(home, ignore_errors=True)
-    session_file = os.path.join(home, ".llmcli", "sessions", "midtrace.jsonl")
+    session_file = os.path.join(home, "sessions", "midtrace.jsonl")
     server = Mock("two_bash_calls", replace={"{{CMD}}": 'cat "%s"' % session_file},
                   port=PORT + 13)
     try:
@@ -463,7 +464,7 @@ def s3_reasoning(mock):
               "reasoning 23 字符" in proc.stderr and "step 1" not in proc.stderr,
               repr(proc.stderr))
 
-        session_file = os.path.join(home, ".llmcli", "sessions", "r1.jsonl")
+        session_file = os.path.join(home, "sessions", "r1.jsonl")
         with open(session_file, "r", encoding="utf-8") as fh:
             records = [json.loads(line) for line in fh if line.strip()]
         reasons = [r["message"].get("reasoning_content") for r in records]
@@ -636,13 +637,13 @@ def s2_interrupt():
 
     server = Mock("slow_command", replace={"{{SLEEP}}": sleep_command}, port=PORT + 9)
     env = dict(os.environ)
-    env["LLMCLI_HOME"] = os.path.join(WORK, "interrupt_home")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     baseline = count_process(image)
     try:
         server.reset()
         proc = subprocess.Popen(
-            [exe_path(), "--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+            [exe_path(), "--config-dir", os.path.join(WORK, "interrupt_home"),
+             "--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, cwd=ROOT, creationflags=flags,
         )
