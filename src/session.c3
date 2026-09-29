@@ -98,7 +98,9 @@ fn Message[] load(Allocator allocator, Session* session)
 	return messages;
 }
 
-// 一次 Trace 的全部消息一次性追加。整块一次 write，避免并发写下多行交错。
+// 追加一批记录：调用方按 turn 攒齐后调用，一次 write 写完一整轮。
+// 整块一次 write，既避免并发写下多行交错，也不会留下半截 turn（assistant 的 tool_calls
+// 与它的 tool 结果同批写入）。
 // turn 与 ts 都随每条记录传进来（消息产生时就记下），不整批共用一个值：同一次 Trace 里
 // 用户输入、工具回填、最终答案分属不同轮、不同时刻，共用一个值会把归属全写成最后一轮、
 // 把时间全写成落盘那一刻。

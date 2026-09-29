@@ -61,7 +61,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 
 会话存储：
   默认 %USERPROFILE%\.llmcli\sessions\<id>.jsonl（可用 LLMCLI_HOME 覆盖根目录）。
-  文件按行记录完整对话（含工具输出与 reasoning_content），v1 不提供清理功能，
+  文件按行记录完整对话（含工具输出与 reasoning_content），每个 turn 完整结束即追加，
+  所以中断或报错时已完成的 turn 已经在文件里；v1 不提供清理功能，
   请自行删除对应文件。落盘内容可能含敏感信息，注意存放位置。
 
 风险提示：

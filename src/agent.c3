@@ -79,6 +79,16 @@ fn void print_answer(String content)
 	}
 }
 
+// 一个 turn 攒齐后立刻落盘并清空缓冲（没给 --session-id 时只清空）。
+// 整轮一次 write：既不会与其他进程的行交错，也不会留下半截 turn——
+// assistant 的 tool_calls 一定和它的 tool 结果同批写入，所以中断/报错后
+// 文件末尾永远是完整 turn，load 读到的必定是合法前缀。
+fn void flush_turn(session::Session* store, List{session::Record}* pending, bool persist) @private
+{
+	if (persist && pending.len()) session::append(store, pending.to_array(mem));
+	pending.clear();
+}
+
 fn int run(cli::Options* options)
 {
 	List{Message} messages;
@@ -101,12 +111,12 @@ fn int run(cli::Options* options)
 	Message user = { .role = "user", .content = options.user_input };
 	messages.push(user);
 
-	// 本次 Trace 新增的消息，成功后一次性落盘；turn 记产生它的那一轮，ts 记它发生的时刻。
-	// 用户输入是触发 turn 1 的输入，后续 assistant/tool 各记自己所在的那一轮。
-	List{session::Record} fresh;
-	fresh.init(mem);
-	defer fresh.free();
-	fresh.push({ .message = user, .turn = 1, .ts = session::timestamp(mem) });
+	// 本 turn 待落盘的记录：turn 记它在哪一轮，ts 记它发生的时刻。
+	// 整个 turn 攒齐后一次 write 落盘（见 flush_turn），落到文件里的永远是完整 turn。
+	List{session::Record} pending;
+	pending.init(mem);
+	defer pending.free();
+	pending.push({ .message = user, .turn = 1, .ts = session::timestamp(mem) });
 
 	bool with_tools = tools::registry_len != 0;
 	String session_note = persist ? string::format(tmem, " session=%s", options.session_id) : "";
@@ -149,7 +159,7 @@ fn int run(cli::Options* options)
 				.tool_calls = response.tool_calls,
 			};
 			messages.push(assistant);
-			fresh.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
+			pending.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
 
 			foreach (call : response.tool_calls)
 			{
@@ -165,8 +175,10 @@ fn int run(cli::Options* options)
 					.content = result.content,
 				};
 				messages.push(tool_message);
-				fresh.push({ .message = tool_message, .turn = turn, .ts = session::timestamp(mem) });
+				pending.push({ .message = tool_message, .turn = turn, .ts = session::timestamp(mem) });
 			}
+			// 这一轮的决策与全部工具结果都攒齐了，整轮落盘
+			flush_turn(&store, &pending, persist);
 			continue LOOP;
 		}
 		if (response.content.len)
@@ -178,8 +190,8 @@ fn int run(cli::Options* options)
 				.content = response.content,
 				.reasoning = response.reasoning,
 			};
-			fresh.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
-			if (persist) session::append(&store, fresh.to_array(mem));
+			pending.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
+			flush_turn(&store, &pending, persist);
 			log::info("Trace 结束，共 %d turn", turn);
 			return cli::EXIT_OK;
 		}

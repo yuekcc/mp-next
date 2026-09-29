@@ -381,6 +381,72 @@ def s3_timestamp_per_message():
         server.stop()
 
 
+def s3_persist_per_turn():
+    """AC: 每个 turn 完整结束后立刻落盘——未收敛的 Trace 也留下已完成的 turn，且不留半截 turn。"""
+    home = os.path.join(WORK, "persist_home")
+    shutil.rmtree(home, ignore_errors=True)
+    server = Mock("always_tools", port=PORT + 12)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                        "--max-turns", "2", "--session-id", "persist"],
+                       stdin_text="一直调用工具", home=home)
+        check("S3 逐 turn 落盘：未收敛时退出码 3", proc.returncode == 3, "exit=%d" % proc.returncode)
+
+        session_file = os.path.join(home, ".llmcli", "sessions", "persist.jsonl")
+        check("S3 逐 turn 落盘：没拿到最终答案也留下已完成的 turn",
+              os.path.exists(session_file), session_file)
+        records = []
+        if os.path.exists(session_file):
+            with open(session_file, "r", encoding="utf-8") as fh:
+                records = [json.loads(line) for line in fh if line.strip()]
+        roles = [r["message"]["role"] for r in records]
+        check("S3 逐 turn 落盘：两个 turn 的决策与工具结果都在",
+              roles == ["user", "assistant", "tool", "assistant", "tool"], str(roles))
+        check("S3 逐 turn 落盘：文件停在完整 turn 上（不留没有工具结果的 tool_calls）",
+              bool(records) and roles[-1] == "tool", str(roles))
+
+        # 续话能读到这份前缀：历史里的每个 tool_calls 都有对应的 tool 消息
+        server.reset()
+        resumed = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                           "--max-turns", "1", "--session-id", "persist"],
+                          stdin_text="继续", home=home)
+        check("S3 逐 turn 落盘：续话按退出码 3 停下", resumed.returncode == 3, resumed.stderr)
+        check("S3 逐 turn 落盘：读回部分历史时没有坏行告警（每批一次 write，不撕裂行）",
+              "无法解析" not in resumed.stderr, repr(resumed.stderr[-400:]))
+        requests = server.requests()
+        history = requests[-1].get("messages", []) if requests else []
+        check("S3 逐 turn 落盘：续话请求带回已落盘的两个 turn",
+              [m.get("role") for m in history] == ["system", "user", "assistant", "tool",
+                                                   "assistant", "tool", "user"],
+              str([m.get("role") for m in history]))
+    finally:
+        server.stop()
+
+
+def s3_persist_mid_trace():
+    """AC: 落盘发生在 Trace 结束之前。turn 2 的工具去读会话文件，必须已经能看到 turn 1。"""
+    home = os.path.join(WORK, "midtrace_home")
+    shutil.rmtree(home, ignore_errors=True)
+    session_file = os.path.join(home, ".llmcli", "sessions", "midtrace.jsonl")
+    server = Mock("two_bash_calls", replace={"{{CMD}}": 'cat "%s"' % session_file},
+                  port=PORT + 13)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
+                        "--session-id", "midtrace"], stdin_text="看看现在存到哪了", home=home)
+        check("S3 中途落盘：退出码 0", proc.returncode == 0, proc.stderr)
+
+        with open(session_file, "r", encoding="utf-8") as fh:
+            records = [json.loads(line) for line in fh if line.strip()]
+        second_tool = records[4]["message"].get("content") or ""
+        check("S3 中途落盘：turn 2 的工具已读到 turn 1 的记录（整批留到 Trace 结束才会红）",
+              '"turn":1' in second_tool and '"role":"user"' in second_tool,
+              repr(second_tool[:400]))
+    finally:
+        server.stop()
+
+
 def s3_reasoning(mock):
     """AC: reasoning_content 落盘、stderr 只打长度摘要、stdout 无泄漏。"""
     home = os.path.join(WORK, "reasoning_home")
@@ -673,6 +739,8 @@ def main():
         s3_sessions(mock, args.verbose)
         s3_turn_per_round(edit_mock)
         s3_timestamp_per_message()
+        s3_persist_per_turn()
+        s3_persist_mid_trace()
         s3_reasoning(mock)
         s2_unknown_tool(mock)
         s2_bad_arguments()

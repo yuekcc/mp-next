@@ -25,6 +25,7 @@
     http_500    返回 500
     no_answer   返回 finish_reason=stop 但 content 为空
     unknown_tool  调用不存在的工具
+    two_bash_calls 同一个 {{CMD}} 连续调两次（用来观察 Trace 中途状态）
     fragmented_tool        一次调用被拆成多元素、靠 index 关联（hy3 等兼容端点）
     parallel_fragmented    多个并行调用各自被拆成多元素、靠 index 关联
 """
@@ -98,6 +99,18 @@ SCENARIOS = {
             ],
         },
         {"finish_reason": "stop", "content": "done sleeping"},
+    ],
+    # 同一个 bash 命令连续调两次，用来观察同一 Trace 内的中间状态（--replace '{{CMD}}=...'）
+    "two_bash_calls": [
+        {
+            "finish_reason": "tool_calls",
+            "tool_calls": [{"id": "call_1", "name": "bash", "arguments": {"command": "{{CMD}}"}}],
+        },
+        {
+            "finish_reason": "tool_calls",
+            "tool_calls": [{"id": "call_2", "name": "bash", "arguments": {"command": "{{CMD}}"}}],
+        },
+        {"finish_reason": "stop", "content": "done"},
     ],
     "bad_arguments": [
         {
