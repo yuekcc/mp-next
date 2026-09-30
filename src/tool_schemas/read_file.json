@@ -1,18 +1,22 @@
 {
-  "type": "object",
-  "properties": {
-    "path": {
-      "type": "string",
-      "description": "The path to the file to read."
+  "name": "read_file",
+  "description": "- Reads and returns the content of a specified file\n- Supports line-based slicing for reading specific portions of large files\n- Each content line is prefixed with its 1-based line number for reference\n- When using 'edit_file', provide the exact text WITHOUT the line-number prefix\n- Use this tool when you need to read the contents of a file to understand its logic or data",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The path to the file to read."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Optional: The 1-based line number to start reading from. Defaults to the beginning of the file."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Optional: The maximum number of lines to read. Defaults to all remaining lines."
+      }
     },
-    "offset": {
-      "type": "number",
-      "description": "Optional: The 1-based line number to start reading from. Defaults to the beginning of the file."
-    },
-    "limit": {
-      "type": "number",
-      "description": "Optional: The maximum number of lines to read. Defaults to all remaining lines."
-    }
-  },
-  "required": ["path"]
+    "required": ["path"]
+  }
 }

@@ -40,7 +40,6 @@ fn int main(String[] args)
 	if (parsed.ctx.list_sessions) return list_sessions();
 
 	tools::install_interrupt_handler();
-	tools::register_builtin_tools();
 
 	http::http_init();
 	defer http::http_deinit();

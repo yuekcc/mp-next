@@ -1,14 +1,18 @@
 {
-  "type": "object",
-  "properties": {
-    "path": {
-      "type": "string",
-      "description": "The path to the directory to list. Defaults to the current working directory. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
+  "name": "list_dir",
+  "description": "- Efficiently explores file system structure\n- Lists one directory level: directories first, then files, each sorted by name; files include their size\n- The last line reports a Summary with file/dir counts\n- Results are limited to 500 items by default; set limit to get more (<=0 means no limit)\n- Use this tool when you need to understand the directory structure or find files in a specific path",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The path to the directory to list. Defaults to the current working directory. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Optional: Maximum number of items to return. Defaults to 500; set to 0 or less for no limit."
+      }
     },
-    "limit": {
-      "type": "number",
-      "description": "Optional: Maximum number of items to return. Defaults to 500; set to 0 or less for no limit."
-    }
-  },
-  "required": []
+    "required": []
+  }
 }

@@ -20,6 +20,8 @@ fn void release(ToolResult* result) @private
 	if (result.content.ptr) free(result.content.ptr);
 }
 
+// 内置工具由 tools.c3 的 @init 在进程启动时注册，测试跑起来时注册表已经就绪；
+// 这里只兜底断言它确实注册上了（@init 漏掉时每个用例都会红）。
 fn void setup() @private
 {
 	if (!tools::find_tool("bash")) tools::register_builtin_tools();
@@ -38,19 +40,62 @@ fn void test_all_builtin_tools_are_registered() @test
 	}
 }
 
-// 内置工具的 parameters 由 $embed 从 src/tool_schemas/*.json 嵌入；
-// 文件写坏时 to_json 只会静默跳过参数，这里兜底校验每个 schema 都是合法 JSON。
+// 内置工具的 name / description / parameters 由 $embed 从 src/tool_schemas/*.json 嵌入。
+// 定义写坏时 register_from_schema 会拒绝注册（并告警），注册表就会少工具——
+// 这里兜底校验注册表的形状：数量、名字、参数 schema 都还合法。
 fn void test_builtin_tool_schemas_are_valid_json() @test
 {
 	setup();
-	test::@check(tools::registry_len > 0, "注册表为空，setup() 没生效？");
+	test::eq((int)tools::registry_len, 5);
 	foreach (tool : tools::registry[0 : tools::registry_len])
 	{
+		test::@check(tool.name.len > 0, "工具缺少 name");
+		test::@check(tool.description.len > 0, "%s 缺少 description", tool.name);
 		CJsonItem* parsed = cjson::parse_with_length((ZString)tool.parameters.ptr,
 		                                             tool.parameters.len);
 		test::@check(parsed != null, "%s 的 parameters 不是合法 JSON：%s", tool.name, tool.parameters);
 		if (parsed) parsed.free();
 	}
+}
+
+// description 在 JSON 里是带 \n 的字符串（协议要求 string，不是数组），
+// 注册后应当仍是可读的多行文本。
+fn void test_description_is_multiline_string() @test
+{
+	setup();
+	Tool* bash = tools::find_tool("bash");
+	test::@check(bash != null, "找不到 bash 工具");
+	if (!bash) return;
+	test::@check(bash.description.contains("\n"), "bash 的 description 没有换行");
+	test::@check(!bash.description.contains("\\n"), "description 里出现了字面 \\n 转义");
+	test::@check(bash.description.starts_with("- Executes a system command"), "description 首行不对");
+}
+
+// 注册表 -> OpenAI tools 字段：每个工具都带上 name / description / parameters 三件套。
+// agent 每次请求都走这条路径，形状坏了模型就看不见工具。
+fn void test_to_json_shape() @test
+{
+	setup();
+	CJsonItem* json = tools::to_json();
+	test::eq((int)json.get_len(), 5);
+
+	for (usz i = 0; i < json.get_len(); i++)
+	{
+		CJsonItem* item = json.get_at((sz)i);
+		test::@check(item != null, "第 %d 项为空", i);
+		if (!item) continue;
+		String type = item.get_key_string("type", tmem) ?? "";
+		test::eq(type, "function");
+		CJsonItem* function = item.get_key("function");
+		test::@check(function != null, "缺少 function 字段");
+		if (!function) continue;
+		test::@check((function.get_key_string("name", tmem) ?? "").len > 0, "function 缺 name");
+		test::@check((function.get_key_string("description", tmem) ?? "").len > 0, "function 缺 description");
+		CJsonItem* parameters = function.get_key("parameters");
+		test::@check(parameters != null, "function 缺 parameters");
+		// parameters 挂在 function 上，随 json.free() 一起释放，这里不能单独 free
+	}
+	json.free();
 }
 
 fn void test_bash_echo() @test

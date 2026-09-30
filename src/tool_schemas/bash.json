@@ -1,10 +1,14 @@
 {
-  "type": "object",
-  "properties": {
-    "command": {
-      "type": "string",
-      "description": "The exact bash command to execute."
-    }
-  },
-  "required": ["command"]
+  "name": "bash",
+  "description": "- Executes a system command in a controlled environment\n- Runs the command synchronously and returns stdout/stderr and the exit code\n- Automatically truncates large outputs to protect context window (keeps the last 2000 lines; the full output is written to a temp file whose path is reported)\n- Commands are always run through `bash -c`; on Windows this is Git Bash\n- Use this tool when you need to run shell commands, build scripts, run tests, or perform other system-level operations",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "The exact bash command to execute."
+      }
+    },
+    "required": ["command"]
+  }
 }

@@ -94,6 +94,45 @@ fn ToolResult run_tool(cli::Ctx* ctx, String name, String arguments)
 	return tool.execute(ctx, args);
 }
 
+// 从一份自包含的工具定义 JSON（name / description / parameters 三件套）注册一个工具。
+// 定义文件是工具的单一事实源：名字、用途说明、参数 schema 全在一个文件里，c3 侧只留"名字 -> 实现"的绑定。
+// 任何一处不合规都拒绝注册并告警——工具定义是编译期嵌入的常量，坏了应当在启动时就嚷嚷，
+// 而不是让一个没有参数约束的工具悄悄上线（旧实现用 `if (parameters)` 静默吞掉解析失败）。
+fn void register_from_schema(ToolFn execute, String definition) @private
+{
+	// 解析用的中间量（cjson 树、序列化缓冲）都在这个池里随用随弃；
+	// 只有要留在注册表里的 name / description / parameters 拷到 mem
+	// （注册表活到进程结束，用 tmem 会在池回收后悬空）。
+	@pool()
+	{
+		CJsonItem* root = cjson::parse_with_length((ZString)definition.ptr, definition.len);
+		if (!root) { log::warn("工具定义不是合法 JSON，忽略：%s", buf::truncate(definition, 120)); return; }
+		defer root.free();
+
+		String name = root.get_key_string("name", tmem) ?? "";
+		if (!name.len) { log::warn("工具定义缺少 name，忽略：%s", buf::truncate(definition, 120)); return; }
+		if (find_tool(name)) { log::warn("工具 %s 重复注册，忽略", name); return; }
+
+		String description = root.get_key_string("description", tmem) ?? "";
+		String parameters = "";
+		if (CJsonItem* schema = root.get_key("parameters"))
+		{
+			// print_unformatted 走 cJSON 自己的分配器：先拷到 mem，再立刻归还，
+			// 否则这段 JSON 文本会随解析池一起漏掉（agent.c3 同款处理）。
+			ZString printed = cjson::print_unformatted(schema);
+			parameters = buf::cstr(mem, printed);
+			cjson::free(printed);
+		}
+
+		register_tool({
+			.name = name.copy(mem),
+			.description = description.copy(mem),
+			.parameters = parameters,
+			.execute = execute,
+		});
+	};
+}
+
 // 注册表 -> OpenAI tools 字段
 fn CJsonItem* to_json()
 {
@@ -114,58 +153,18 @@ fn CJsonItem* to_json()
 	return array;
 }
 
+// 五个内置工具都不看本次运行的配置（ctx 参数留给后续的 subagent / skill），
+// 所以适配器丢掉 ctx 直接转到各自的实现上：不改 tool_* 的签名，将来真要用 ctx 的工具
+// 只管把 ToolFn 的签名写全，这五个不用跟着再动一遍。
+//
+// 每个工具的 name / description / parameters 都在 src/tool_schemas/*.json 里，这里只绑实现。
 fn void register_builtin_tools()
 {
-	// 五个内置工具都不看本次运行的配置（ctx 参数留给后续的 subagent / skill），
-	// 所以适配器丢掉 ctx 直接转到各自的实现上：不改 tool_* 的签名，将来真要用 ctx 的工具
-	// 只管把 ToolFn 的签名写全，这五个不用跟着再动一遍。
-	register_tool({
-		.name = "bash",
-		.description = "- Executes a system command in a controlled environment\n"
-		               "- Runs the command synchronously and returns stdout/stderr and the exit code\n"
-		               "- Automatically truncates large outputs to protect context window (keeps the last 2000 lines; the full output is written to a temp file whose path is reported)\n"
-		               "- Commands are always run through `bash -c`; on Windows this is Git Bash\n"
-		               "- Use this tool when you need to run shell commands, build scripts, run tests, or perform other system-level operations",
-		.parameters = $embed("../tool_schemas/bash.json"),
-		.execute = &run_bash,
-	});
-	register_tool({
-		.name = "edit_file",
-		.description = "- Performs precision string replacement in a file\n"
-		               "- Requires an exact match for 'old_string', including whitespace and line endings\n"
-		               "- Requires a unique match unless 'allow_multiple' is set; on multiple matches nothing is modified\n"
-		               "- Use this tool when you need to make surgical changes to specific parts of a file without rewriting it entirely",
-		.parameters = $embed("../tool_schemas/edit_file.json"),
-		.execute = &run_edit_file,
-	});
-	register_tool({
-		.name = "read_file",
-		.description = "- Reads and returns the content of a specified file\n"
-		               "- Supports line-based slicing for reading specific portions of large files\n"
-		               "- Each content line is prefixed with its 1-based line number for reference\n"
-		               "- When using 'edit_file', provide the exact text WITHOUT the line-number prefix\n"
-		               "- Use this tool when you need to read the contents of a file to understand its logic or data",
-		.parameters = $embed("../tool_schemas/read_file.json"),
-		.execute = &run_read_file,
-	});
-	register_tool({
-		.name = "write_file",
-		.description = "- Writes complete content to a specified file\n"
-		               "- Overwrites the file if it already exists; missing parent directories are NOT created\n"
-		               "- Use this tool when you need to create a new file or fully overwrite an existing one",
-		.parameters = $embed("../tool_schemas/write_file.json"),
-		.execute = &run_write_file,
-	});
-	register_tool({
-		.name = "list_dir",
-		.description = "- Efficiently explores file system structure\n"
-		               "- Lists one directory level: directories first, then files, each sorted by name; files include their size\n"
-		               "- The last line reports a Summary with file/dir counts\n"
-		               "- Results are limited to 500 items by default; set limit to get more (<=0 means no limit)\n"
-		               "- Use this tool when you need to understand the directory structure or find files in a specific path",
-		.parameters = $embed("../tool_schemas/list_dir.json"),
-		.execute = &run_list_dir,
-	});
+	register_from_schema(&run_bash, $embed("../tool_schemas/bash.json"));
+	register_from_schema(&run_edit_file, $embed("../tool_schemas/edit_file.json"));
+	register_from_schema(&run_read_file, $embed("../tool_schemas/read_file.json"));
+	register_from_schema(&run_write_file, $embed("../tool_schemas/write_file.json"));
+	register_from_schema(&run_list_dir, $embed("../tool_schemas/list_dir.json"));
 }
 
 fn ToolResult run_bash(cli::Ctx* ctx, CJsonItem* args) @private => tool_bash(args);
@@ -173,3 +172,12 @@ fn ToolResult run_edit_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_edi
 fn ToolResult run_read_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_read_file(args);
 fn ToolResult run_write_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_write_file(args);
 fn ToolResult run_list_dir(cli::Ctx* ctx, CJsonItem* args) @private => tool_list_dir(args);
+
+// 内置工具在进程启动时注册一次（@init 先于 main，也先于 c3c test 的用例）。
+// 注册要把 JSON 里的 name/description/parameters 留在注册表里，注册表活到进程结束，
+// 所以这几笔分配是"有意长存"的——放在 @init 里，c3c test 的泄漏检测就不会把它们
+// 当成某个用例的残留（检测器只在用例执行期间替换分配器）。
+fn void register_builtin_tools_at_startup() @init
+{
+	register_builtin_tools();
+}

@@ -159,7 +159,6 @@ fn void test_request_includes_tools_when_registered() @test
 {
 	@pool()
 	{
-		if (!tools::find_tool("bash")) tools::register_builtin_tools();
 		cli::Ctx ctx;
 		ctx.model = "m";
 		Message user = { .role = "user", .content = "hi" };
