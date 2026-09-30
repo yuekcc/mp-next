@@ -18,7 +18,7 @@ fn int _ls_entry_cmp(LsEntry a, LsEntry b)
 
 // 纯 c3 列举目录：目录在前、文件在后，各自按名升序；文件附人类可读大小；
 // 末行输出 Summary（文件/目录计数）。limit<=0 表示不限制（对齐 mini_pi 默认 500）。
-fn ToolResult tool_list_dir(CJsonItem* args)
+fn ToolResult tool_list_dir(CJsonItem* args) @private
 {
 	String dir_path = args.get_key_string("path", tmem) ?? ".";
 	int limit = args.get_key_int("limit") ?? 500;

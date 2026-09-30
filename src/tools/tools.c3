@@ -1,7 +1,8 @@
 module llmcli::tools;
 
 import cjson;
-import llmcli::buf, llmcli::log;
+import std::io::file;
+import llmcli::buf, llmcli::cli, llmcli::log;
 
 // 工具执行结果。content 一律是 mem 上的堆字符串，由调用方释放（agent 会话落盘后释放）。
 struct ToolResult
@@ -22,7 +23,10 @@ fn ToolResult fail(String content)
 	return result;
 }
 
-alias ToolFn = fn ToolResult(CJsonItem* args);
+// ctx 是本次运行的配置（见 cli::Ctx）。工具不必去够全局就能知道"我在为谁跑"——
+// subagent 这类工具需要父运行的 model / api_url，就从这里拿。
+// 本次没有工具用它，参数先立在这里：接口一旦落后于需求，工具就会各自去够全局。
+alias ToolFn = fn ToolResult(cli::Ctx* ctx, CJsonItem* args);
 
 // 统一工具接口：新增工具只要填这个结构并注册，agent loop 不用改。
 struct Tool
@@ -69,7 +73,7 @@ fn String tool_names()
 }
 
 // 工具调用的统一入口：未知工具名 / 参数非法都回填结构化错误，交给 LLM 自我修正。
-fn ToolResult run_tool(String name, String arguments)
+fn ToolResult run_tool(cli::Ctx* ctx, String name, String arguments)
 {
 	Tool* tool = find_tool(name);
 	if (!tool) return fail(string::tformat("未知工具 %s；可用工具：%s", name, tool_names()));
@@ -87,7 +91,7 @@ fn ToolResult run_tool(String name, String arguments)
 		args.free();
 		args = parsed;
 	}
-	return tool.execute(args);
+	return tool.execute(ctx, args);
 }
 
 // 注册表 -> OpenAI tools 字段
@@ -112,38 +116,47 @@ fn CJsonItem* to_json()
 
 fn void register_builtin_tools()
 {
+	// 五个内置工具都不看本次运行的配置（ctx 参数留给后续的 subagent / skill），
+	// 所以适配器丢掉 ctx 直接转到各自的实现上：不改 tool_* 的签名，将来真要用 ctx 的工具
+	// 只管把 ToolFn 的签名写全，这五个不用跟着再动一遍。
 	register_tool({
 		.name = "bash",
 		.description = "在用户机器上执行一条 bash 命令，回填 stdout/stderr 与退出码。"
 		               "输出截断到末 2000 行，截断前完整输出落盘到临时文件。各平台统一经 bash -c 执行，"
 		               "Windows 上使用 Git Bash。",
 		.parameters = $embed("../tool_schemas/bash.json"),
-		.execute = &tool_bash,
+		.execute = &run_bash,
 	});
 	register_tool({
 		.name = "edit_file",
 		.description = "把文件中的一段文本精确替换成另一段。old_string 必须精确匹配（含空白与换行）。"
 		               "默认要求唯一匹配，出现多次会报错且不修改；设 allow_multiple=true 可替换全部。",
 		.parameters = $embed("../tool_schemas/edit_file.json"),
-		.execute = &tool_edit_file,
+		.execute = &run_edit_file,
 	});
 	register_tool({
 		.name = "read_file",
 		.description = "读取一个文本文件并按行回填（行号前缀便于定位）。大文件用 offset/limit 分页。",
 		.parameters = $embed("../tool_schemas/read_file.json"),
-		.execute = &tool_read_file,
+		.execute = &run_read_file,
 	});
 	register_tool({
 		.name = "write_file",
 		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；父目录必须已存在。",
 		.parameters = $embed("../tool_schemas/write_file.json"),
-		.execute = &tool_write_file,
+		.execute = &run_write_file,
 	});
 	register_tool({
 		.name = "list_dir",
 		.description = "列举目录内容：目录在前、文件在后各按名排序，文件附大小；末行输出 Summary。"
 		               "默认最多 500 条，可用 limit 调整（<=0 不限制）。",
 		.parameters = $embed("../tool_schemas/list_dir.json"),
-		.execute = &tool_list_dir,
+		.execute = &run_list_dir,
 	});
 }
+
+fn ToolResult run_bash(cli::Ctx* ctx, CJsonItem* args) @private => tool_bash(args);
+fn ToolResult run_edit_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_edit_file(args);
+fn ToolResult run_read_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_read_file(args);
+fn ToolResult run_write_file(cli::Ctx* ctx, CJsonItem* args) @private => tool_write_file(args);
+fn ToolResult run_list_dir(cli::Ctx* ctx, CJsonItem* args) @private => tool_list_dir(args);

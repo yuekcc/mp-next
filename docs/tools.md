@@ -12,7 +12,7 @@ struct ToolResult
 	bool is_error;    // true 表示这次调用失败（错误文本照样回填，让 LLM 自我修正）
 }
 
-alias ToolFn = fn ToolResult(CJsonItem* args);   // args 是已解析好的参数 JSON 对象
+alias ToolFn = fn ToolResult(Ctx* ctx, CJsonItem* args);
 
 struct Tool
 {
@@ -26,6 +26,9 @@ struct Tool
 调用方（agent）保证：
 
 - `args` 一定是个 JSON 对象（参数非法时不会进到 `execute`，而是直接回填错误文本）；
+- `ctx` 是**本次运行的配置**（`llmcli::cli::Ctx`：`model` / `api_url` / `session_id` / `max_turns` …），
+  由 `run_tool` 原样透传。工具想按本次运行调模型（比如 subagent），从这里拿参数，
+  不要去够全局——一次运行一个 `Ctx`，全局对象没有服务对象；
 - 你返回的 `content` 由调用方释放，所以**必须**用 `ok(...)` / `fail(...)` 构造
   （它们会 `copy(mem)` 一份），不要把指向 `tmem` 或字符串常量的切片直接塞进去。
 
@@ -34,6 +37,8 @@ struct Tool
 假设要新增一个在文件里搜关键字的 `grep` 工具。新建 `src/tools/grep.c3`（一个工具一个文件）加实现函数：
 
 ```c3
+import std::io::file;   // file::load 在这个模块里
+
 fn ToolResult tool_grep(CJsonItem* args)
 {
 	String path = args.get_key_string("path", tmem) ?? "";
@@ -53,6 +58,29 @@ fn ToolResult tool_grep(CJsonItem* args)
 	return ok(string::tformat("在 %s 中命中 %d 行：\n%s", path, n, buf.str_view()));
 }
 ```
+
+它不关心本次运行的配置，就在 `src/tools/tools.c3` 里再写一行适配器：注册表要的是带 `ctx` 的
+`ToolFn`，而实现只想要 `args`，这一层就是把多出来的那个参数丢掉。这样实现函数保持原样，
+将来真要用 `ctx` 的工具再把签名写全，互不影响。
+
+```c3
+fn ToolResult run_grep(Ctx* ctx, CJsonItem* args) @private => tool_grep(args);
+```
+
+要用 `ctx` 的话就别绕这一层，直接把 `ToolFn` 的签名写全：
+
+```c3
+fn ToolResult tool_recall(Ctx* ctx, CJsonItem* args)
+{
+	// 例如按本次运行的配置去读历史；参数照旧从 args 取
+	String session_id = ctx.session_id;
+	...
+	return ok(...);
+}
+```
+
+（`Ctx` 在本模块里就是 `llmcli::tools` 所在的同一个 `llmcli` 包，不用额外限定；
+`ctx` 只读，别往里写东西。）
 
 再新建 `src/tool_schemas/grep.json` 放参数 JSON Schema：
 
@@ -76,7 +104,7 @@ fn ToolResult tool_grep(CJsonItem* args)
 		.name = "grep",
 		.description = "在文件里搜索包含指定模式的行。",
 		.parameters = $embed("../tool_schemas/grep.json"),
-		.execute = &tool_grep,
+		.execute = &run_grep,
 	});
 ```
 
@@ -94,6 +122,8 @@ llmcli --model ... --api-key ... "在 src/cli.c3 里搜 parse"
 - `parameters` 必须是合法 JSON Schema；解析失败时该工具的参数会被跳过（LLM 仍能调用，只是没有参数约束）。
   `c3c test` 里的 `test_builtin_tool_schemas_are_valid_json` 会校验内置 schema。
 - 工具注册表是固定 32 槽（`MAX_TOOLS`），超了会告警并忽略。
+- `ctx` 是只读约定：工具想按本次运行换行为，就照它读参数，**不要**改它——
+  `Ctx` 的一份配置服务一整次运行（C3 没有 const 成员约束，只能靠这条约定）。
 - 单个工具内部要读写的临时字符串用 `tmem`，只有返回给调用方的 `content` 走 `ok`/`fail`（mem）。
 - 一次工具调用失败不是致命错误：把原因写进 `content` 并设 `is_error = true`，agent 会原样回填给
   LLM 继续下一 turn（PRD T3.8）。

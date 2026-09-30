@@ -133,8 +133,8 @@ fn void test_request_strips_reasoning_content() @test
 {
 	@pool()
 	{
-		cli::Options options;
-		options.model = "m";
+		cli::Ctx ctx;
+		ctx.model = "m";
 		Message assistant = {
 			.role = "assistant",
 			.content = "answer",
@@ -142,7 +142,7 @@ fn void test_request_strips_reasoning_content() @test
 		};
 		Message[] messages = { assistant };
 
-		String body = agent::build_request(&options, messages, false);
+		String body = agent::build_request(&ctx, messages, false);
 		test::@check(!body.contains("reasoning_content"),
 		             "请求体不能带 reasoning_content，实际：%s", body);
 		test::@check(body.contains(`"stream":false`), "stream 必须是 false，实际：%s", body);
@@ -160,12 +160,12 @@ fn void test_request_includes_tools_when_registered() @test
 	@pool()
 	{
 		if (!tools::find_tool("bash")) tools::register_builtin_tools();
-		cli::Options options;
-		options.model = "m";
+		cli::Ctx ctx;
+		ctx.model = "m";
 		Message user = { .role = "user", .content = "hi" };
 		Message[] messages = { user };
 
-		String body = agent::build_request(&options, messages, true);
+		String body = agent::build_request(&ctx, messages, true);
 		test::@check(body.contains(`"tools"`), "启用工具时应带 tools 字段，实际：%s", body);
 		test::@check(body.contains(`"bash"`), "应包含 bash 工具定义，实际：%s", body);
 	};

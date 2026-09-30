@@ -80,29 +80,44 @@ CI/脚本集成：
 
 文档：docs/tools.md（如何新增工具）`;
 
-struct Options
+// 一次运行（一个 Trace）的全部配置。经函数参数向下传递，不是全局：
+// 同一进程内换一份 Ctx 再跑一次是合法用法（subagent 的受限工具集、skill 的提示词注入）。
+//
+// 字段分四类。新增字段必须先归入某一类，别让它退化回"什么都往里塞"的篮子。
+struct Ctx
 {
-	String api_key;
-	String api_url;
-	String model;
-	String session_id;
-	String system_prompt;
+	// --- 初始设置：本次运行的固定前提，运行期间不变，换了就等于换一次运行 ---
+	String api_key;      // 端点密钥；仅用于 Authorization，日志里由 log 脱敏
+	String api_url;      // 端点，默认 DEFAULT_API_URL
+	String model;        // 模型 id，原样进请求体
+	String config_dir;   // 配置根目录（会话落盘位置）；空 = 用默认 ~/.llmcli
+
+	// --- 本次运行边界：约束这一次 Trace 的范围，运行期间同样不变 ---
+	String session_id;      // 空 = 不落盘、不续话；非空时同一 id 跨调用累积历史
+	int max_turns;          // 0 或负数 = 不设上限
+	String system_prompt;   // 已展开占位符；空 = 用一个空的 system 消息（resolve 会回填默认提示词）
+	String user_input;      // 本次要问的内容（mem 堆串，调用方负责释放）
+
+	// --- 解析中间量：只在 parse/resolve 里用，agent 一次都不读。
+	//     resolve 成功后 prompt / system_prompt_file 必然被搬空（进 user_input / system_prompt），
+	//     input_file 留着只为报错能指名道姓。工具与 run 都别依赖它们。 ---
 	String system_prompt_file;
 	String input_file;
 	String prompt;
-	String user_input;
-	String config_dir;
-	int max_turns;   // 0 或负数 = 不设上限
-	bool quiet;
-	bool debug;
-	bool no_color;
+
+	// --- 日志开关：只影响 stderr 的过程日志，与请求/落盘内容无关 ---
+	bool quiet;        // stderr 只保留错误
+	bool debug;        // stderr 额外打印原始请求/响应
+	bool no_color;     // 关闭 stderr 颜色
+
+	// --- 动作开关：不改运行配置，只决定 main 走哪条路（然后立刻返回） ---
 	bool list_sessions;
 	bool help;
 }
 
 struct ParseResult
 {
-	Options opts;
+	Ctx ctx;
 	String error;
 }
 
@@ -153,12 +168,13 @@ fn String expand_prompt_placeholders(String text)
 	return out.copy_str(mem);
 }
 
-// 解析 flags 并补齐运行所需的一切：系统提示词与用户输入也在这里读取。
-// 注意有 I/O 副作用：stdin 是管道时会阻塞到 EOF，--input-file / --system-prompt-file 会读文件。
-fn ParseResult resolve(String[] args)
+// 纯解析：只看 argv，不读 stdin、不读任何文件。
+// --help / --list-sessions 在这里就短路返回——它们必须在碰 stdin 之前结束，
+// 否则 `llmcli --help` 在终端里会阻塞等输入。
+fn ParseResult parse(String[] args)
 {
 	ParseResult res;
-	Options* o = &res.opts;
+	Ctx* o = &res.ctx;
 	o.api_url = DEFAULT_API_URL;
 	bool seen_prompt = false;
 
@@ -203,14 +219,14 @@ fn ParseResult resolve(String[] args)
 		{
 			String value;
 			if (!take_value(args, &i, name, inline_value, has_inline, &value, &res.error)) return res;
-			int? parsed = value.to_int();
-			if (catch err = parsed)
+			int? turns = value.to_int();
+			if (catch err = turns)
 			{
 				res.error = string::tformat("--max-turns 需要整数，收到 %s", value);
 				return res;
 			}
 			// <=0 视为不设上限（与"没给这个参数"等价）
-			if (parsed > 0) o.max_turns = parsed;
+			if (turns > 0) o.max_turns = turns;
 			i++;
 			continue;
 		}
@@ -249,6 +265,38 @@ fn ParseResult resolve(String[] args)
 		res.error = "--system-prompt 与 --system-prompt-file 互斥";
 		return res;
 	}
+
+	// 输入三选一在纯解析里就查：冲突/缺失都是用法错误，不该先去读 stdin 或敲文件。
+	// 只有 stdin 这一路要碰 stdin（isatty 只是问一句，不读内容）。
+	bool stdin_pipe = !io::stdin().isatty();
+	String sources = "";
+	if (o.prompt.len) sources = "位置参数";
+	if (o.input_file.len) sources = sources.len ? sources.tconcat(" + --input-file") : "--input-file";
+	if (stdin_pipe) sources = sources.len ? sources.tconcat(" + stdin 管道") : "stdin 管道";
+
+	usz source_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0) + (stdin_pipe ? 1 : 0));
+	if (source_count > 1)
+	{
+		res.error = string::tformat("输入必须三选一（位置参数 / stdin 管道 / --input-file），"
+		                            "当前同时给了：%s", sources);
+		return res;
+	}
+	if (source_count == 0)
+	{
+		res.error = "缺少输入：请用位置参数、stdin 管道或 --input-file 提供 prompt";
+		return res;
+	}
+	return res;
+}
+
+// parse + 补齐运行所需的一切：系统提示词与用户输入也在这里读取。
+// 注意有 I/O 副作用：stdin 是管道时会阻塞到 EOF，--input-file / --system-prompt-file 会读文件。
+fn ParseResult resolve(String[] args)
+{
+	ParseResult res = parse(args);
+	Ctx* o = &res.ctx;
+	if (res.error.len || o.help || o.list_sessions) return res;
+
 	if (o.system_prompt_file.len)
 	{
 		// 读进来后统一走 expand_prompt_placeholders 复制到 mem，这里用 tmem 不留中间缓冲
@@ -270,26 +318,6 @@ fn ParseResult resolve(String[] args)
 	if (!o.model.len)
 	{
 		res.error = "--model 必填";
-		return res;
-	}
-
-	// 输入三选一：位置参数 / stdin 管道 / --input-file
-	bool stdin_pipe = !io::stdin().isatty();
-	String sources = "";
-	if (o.prompt.len) sources = "位置参数";
-	if (o.input_file.len) sources = sources.len ? sources.tconcat(" + --input-file") : "--input-file";
-	if (stdin_pipe) sources = sources.len ? sources.tconcat(" + stdin 管道") : "stdin 管道";
-
-	usz source_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0) + (stdin_pipe ? 1 : 0));
-	if (source_count > 1)
-	{
-		res.error = string::tformat("输入必须三选一（位置参数 / stdin 管道 / --input-file），"
-		                            "当前同时给了：%s", sources);
-		return res;
-	}
-	if (source_count == 0)
-	{
-		res.error = "缺少输入：请用位置参数、stdin 管道或 --input-file 提供 prompt";
 		return res;
 	}
 

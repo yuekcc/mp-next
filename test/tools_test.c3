@@ -2,7 +2,17 @@ module llmcli::test_tools;
 
 import std::io;
 import cjson;
-import llmcli::tools;
+import llmcli::cli, llmcli::tools;
+
+// 一次运行的配置。工具接口要求传 ctx，这里给的是测试用的空配置——
+// 五个内置工具都不读它，真正的消费者（subagent 之类的后续工具）才会。
+fn cli::Ctx test_ctx() @private
+{
+	cli::Ctx ctx;
+	ctx.model = "test-model";
+	ctx.api_url = "http://127.0.0.1:1/v1/chat/completions";
+	return ctx;
+}
 
 // ToolResult.content 归调用方所有（mem 上的堆串），测试里统一释放
 fn void release(ToolResult* result) @private
@@ -13,6 +23,19 @@ fn void release(ToolResult* result) @private
 fn void setup() @private
 {
 	if (!tools::find_tool("bash")) tools::register_builtin_tools();
+}
+
+// 工具接口带了 ctx：注册表里的每个工具都得能被 run_tool 用 ctx 调起来，
+// 漏改签名的工具会在这里被编译期挡住（函数指针类型不匹配）。
+fn void test_all_builtin_tools_are_registered() @test
+{
+	setup();
+	test::eq((int)tools::registry_len, 5);
+	String[] expected = { "bash", "edit_file", "read_file", "write_file", "list_dir" };
+	for (usz i = 0; i < expected.len; i++)
+	{
+		test::eq(tools::registry[i].name, expected[i]);
+	}
 }
 
 // 内置工具的 parameters 由 $embed 从 src/tool_schemas/*.json 嵌入；
@@ -33,7 +56,8 @@ fn void test_builtin_tool_schemas_are_valid_json() @test
 fn void test_bash_echo() @test
 {
 	setup();
-	tools::ToolResult result = tools::run_tool("bash", `{"command":"echo hello"}`);
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "bash", `{"command":"echo hello"}`);
 	io::printfn("bash content=%s", result.content);
 	test::eq(result.is_error, false);
 	test::@check(result.content.contains("hello"), "应回填 stdout 内容，实际：%s", result.content);
@@ -44,7 +68,8 @@ fn void test_bash_echo() @test
 fn void test_bash_stderr_and_exit_code() @test
 {
 	setup();
-	tools::ToolResult result = tools::run_tool("bash", `{"command":"echo oops 1>&2 & exit 3"}`);
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "bash", `{"command":"echo oops 1>&2 & exit 3"}`);
 	io::printfn("bash content=%s", result.content);
 	test::eq(result.is_error, false);
 	test::@check(result.content.contains("oops"), "应回填 stderr 内容，实际：%s", result.content);
@@ -62,7 +87,8 @@ fn void test_bash_inherits_environment_path() @test
 		command = "command -v sh";
 	$endif
 
-	tools::ToolResult result = tools::run_tool("bash",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "bash",
 		string::tformat(`{"command":"%s"}`, command));
 	io::printfn("bash content=%s", result.content);
 	test::@check(result.content.contains("cmd.exe"),
@@ -72,7 +98,8 @@ fn void test_bash_inherits_environment_path() @test
 
 fn void test_unknown_tool_reports_error() @test
 {
-	tools::ToolResult result = tools::run_tool("nope", "{}");
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "nope", "{}");
 	test::eq(result.is_error, true);
 	test::@check(result.content.contains("未知工具"), "应提示未知工具，实际：%s", result.content);
 	release(&result);
@@ -81,7 +108,8 @@ fn void test_unknown_tool_reports_error() @test
 fn void test_invalid_arguments_reports_error() @test
 {
 	setup();
-	tools::ToolResult result = tools::run_tool("bash", "{not json");
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "bash", "{not json");
 	test::eq(result.is_error, true);
 	test::@check(result.content.contains("合法 JSON"), "应提示参数非法，实际：%s", result.content);
 	release(&result);
@@ -93,7 +121,8 @@ fn void test_edit_file_unique_match() @test
 	String path = "build/test_edit_file.txt";
 	(void)file::save(path, "alpha\nold-text\nomega\n");
 
-	tools::ToolResult result = tools::run_tool("edit_file",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "edit_file",
 		string::tformat(`{"path":"%s","old_string":"old-text","new_string":"new-text"}`, path));
 	test::eq(result.is_error, false);
 	release(&result);
@@ -118,7 +147,8 @@ fn void test_edit_file_missing_match_leaves_file_alone() @test
 	String path = "build/test_edit_missing.txt";
 	(void)file::save(path, "alpha\n");
 
-	tools::ToolResult result = tools::run_tool("edit_file",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "edit_file",
 		string::tformat(`{"path":"%s","old_string":"nope","new_string":"x"}`, path));
 	test::eq(result.is_error, true);
 	test::@check(result.content.contains("找不到"), "应提示找不到，实际：%s", result.content);
@@ -136,7 +166,8 @@ fn void test_edit_file_ambiguous_match_leaves_file_alone() @test
 	String path = "build/test_edit_ambiguous.txt";
 	(void)file::save(path, "dup\ndup\n");
 
-	tools::ToolResult result = tools::run_tool("edit_file",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "edit_file",
 		string::tformat(`{"path":"%s","old_string":"dup","new_string":"x"}`, path));
 	test::eq(result.is_error, true);
 	test::@check(result.content.contains("不唯一"), "应提示不唯一，实际：%s", result.content);
@@ -154,7 +185,8 @@ fn void test_edit_file_allow_multiple() @test
 	String path = "build/test_edit_multi.txt";
 	(void)file::save(path, "dup\ndup\n");
 
-	tools::ToolResult result = tools::run_tool("edit_file",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "edit_file",
 		string::tformat(`{"path":"%s","old_string":"dup","new_string":"x","allow_multiple":true}`, path));
 	test::eq(result.is_error, false);
 	release(&result);
@@ -171,7 +203,8 @@ fn void test_read_file_paginates() @test
 	String path = "build/test_read.txt";
 	(void)file::save(path, "L1\nL2\nL3\nL4\n");
 
-	tools::ToolResult result = tools::run_tool("read_file",
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "read_file",
 		string::tformat(`{"path":"%s","offset":2,"limit":2}`, path));
 	test::eq(result.is_error, false);
 	test::@check(result.content.contains("2\tL2"), "应显示第 2 行，实际：%s", result.content);
@@ -183,7 +216,8 @@ fn void test_read_file_paginates() @test
 fn void test_read_file_missing_reports_error() @test
 {
 	setup();
-	tools::ToolResult result = tools::run_tool("read_file", `{"path":"build/does_not_exist_xyz.txt"}`);
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "read_file", `{"path":"build/does_not_exist_xyz.txt"}`);
 	test::eq(result.is_error, true);
 	release(&result);
 }
@@ -192,7 +226,8 @@ fn void test_list_dir_lists_entries() @test
 {
 	setup();
 	// 用 build 目录自身，至少应列得出来且含 Summary
-	tools::ToolResult result = tools::run_tool("list_dir", `{"path":"build"}`);
+	cli::Ctx ctx = test_ctx();
+	tools::ToolResult result = tools::run_tool(&ctx, "list_dir", `{"path":"build"}`);
 	test::eq(result.is_error, false);
 	test::@check(result.content.contains("Summary:"), "应含 Summary 行，实际：%s", result.content);
 	release(&result);

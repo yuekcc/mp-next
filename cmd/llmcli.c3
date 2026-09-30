@@ -21,11 +21,11 @@ fn int list_sessions()
 fn int main(String[] args)
 {
 	cli::ParseResult parsed = cli::resolve(args);
-	session::set_config_dir(parsed.opts.config_dir);
-	log::init(parsed.opts.quiet, parsed.opts.debug, parsed.opts.no_color);
-	log::add_secret(parsed.opts.api_key);
+	session::set_config_dir(parsed.ctx.config_dir);
+	log::init(parsed.ctx.quiet, parsed.ctx.debug, parsed.ctx.no_color);
+	log::add_secret(parsed.ctx.api_key);
 
-	if (parsed.opts.help)
+	if (parsed.ctx.help)
 	{
 		io::printn(cli::HELP);
 		return cli::EXIT_OK;
@@ -37,7 +37,7 @@ fn int main(String[] args)
 		io::eprintfn("运行 llmcli --help 查看全部 flags");
 		return cli::EXIT_USAGE;
 	}
-	if (parsed.opts.list_sessions) return list_sessions();
+	if (parsed.ctx.list_sessions) return list_sessions();
 
 	tools::install_interrupt_handler();
 	tools::register_builtin_tools();
@@ -45,5 +45,5 @@ fn int main(String[] args)
 	http::http_init();
 	defer http::http_deinit();
 
-	return agent::run(&parsed.opts);
+	return agent::run(&parsed.ctx);
 }

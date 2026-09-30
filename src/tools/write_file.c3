@@ -4,7 +4,7 @@ import std::io;
 import cjson;
 import llmcli::log;
 
-fn ToolResult tool_write_file(CJsonItem* args)
+fn ToolResult tool_write_file(CJsonItem* args) @private
 {
 	String path = args.get_key_string("path", tmem) ?? "";
 	String content = args.get_key_string("content", tmem) ?? "";

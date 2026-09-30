@@ -5,7 +5,7 @@ import cjson;
 
 // 读取文本文件并按行回填。offset 是 1-based 起始行（<=0 表示从头），limit 是最多行数（<=0 表示不限制）。
 // 行号前缀 `N\t` 便于模型在 EditFile 时定位；不引入 hash 机制（mp-next 无对应 util）。
-fn ToolResult tool_read_file(CJsonItem* args)
+fn ToolResult tool_read_file(CJsonItem* args) @private
 {
 	String path = args.get_key_string("path", tmem) ?? "";
 	if (!path.len) return fail("缺少必填参数 path（字符串）");

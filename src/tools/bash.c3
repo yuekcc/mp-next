@@ -187,7 +187,7 @@ fn ToolResult bash_run(String command)
 	return ok(result.str_view());
 }
 
-fn ToolResult tool_bash(CJsonItem* args)
+fn ToolResult tool_bash(CJsonItem* args) @private
 {
 	String? command = args.get_key_string("command", tmem);
 	if (catch err = command) return fail("缺少必填参数 command（字符串）");

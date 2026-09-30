@@ -4,7 +4,7 @@ import std::io;
 import cjson;
 import llmcli::log;
 
-fn ToolResult tool_edit_file(CJsonItem* args)
+fn ToolResult tool_edit_file(CJsonItem* args) @private
 {
 	String path = args.get_key_string("path", tmem) ?? "";
 	String old_text = args.get_key_string("old_string", tmem) ?? "";

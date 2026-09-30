@@ -12,12 +12,12 @@ const usz DEBUG_PREVIEW = 4000;
 
 // 组装一次 chat completions 请求体（tmem，属本轮 scratch）。
 // include_reasoning 恒为 false：reasoning_content 只入会话存档，绝不回传给端点。
-fn String build_request(cli::Options* options, Message[] messages, bool with_tools)
+fn String build_request(cli::Ctx* ctx, Message[] messages, bool with_tools)
 {
 	CJsonItem* root = cjson::create_object();
 	defer root.free();
 
-	root.set("model", options.model);
+	root.set("model", ctx.model);
 	CJsonItem* array = cjson::create_array();
 	foreach (message : messages)
 	{
@@ -35,22 +35,22 @@ fn String build_request(cli::Options* options, Message[] messages, bool with_too
 	return body;
 }
 
-fn ChatResponse chat_once(cli::Options* options, Message[] messages, bool with_tools)
+fn ChatResponse chat_once(cli::Ctx* ctx, Message[] messages, bool with_tools)
 {
 	ChatResponse response;
 
-	String request_body = build_request(options, messages, with_tools);
+	String request_body = build_request(ctx, messages, with_tools);
 	String[] headers = {
 		"Content-Type: application/json",
-		string::format(tmem, "Authorization: Bearer %s", options.api_key),
+		string::format(tmem, "Authorization: Bearer %s", ctx.api_key),
 	};
 
-	log::debug("POST %s", options.api_url);
+	log::debug("POST %s", ctx.api_url);
 	// 密钥由 log 统一脱敏（main 里 add_secret 注册过一次），这里直接打原文即可
-	log::debug("headers: Content-Type: application/json, Authorization: Bearer %s", options.api_key);
+	log::debug("headers: Content-Type: application/json, Authorization: Bearer %s", ctx.api_key);
 	log::debug("request: %s", buf::truncate(request_body, DEBUG_PREVIEW));
 
-	http::HttpResponse res = http::http_post_json(options.api_url, headers, request_body);
+	http::HttpResponse res = http::http_post_json(ctx.api_url, headers, request_body);
 	if (res.error.len)
 	{
 		response.error = string::format(mem, "网络错误：%s", res.error);
@@ -89,26 +89,27 @@ fn void flush_turn(session::Session* store, List{session::Record}* pending, bool
 	pending.clear();
 }
 
-fn int run(cli::Options* options)
+// 一次运行（一个 Trace）：上下文从 ctx 进，turn/messages/pending/store 都只活在这个函数里。
+fn int run(cli::Ctx* ctx)
 {
 	List{Message} messages;
 	messages.init(mem);
 	defer messages.free();
 
 	session::Session store;
-	bool persist = options.session_id.len != 0;
+	bool persist = ctx.session_id.len != 0;
 	if (persist)
 	{
-		store = session::open(options.session_id);
+		store = session::open(ctx.session_id);
 		// 系统提示词不进会话文件，每次运行重新注入（flag 或内置默认提示词）
 		foreach (message : session::load(mem, &store)) messages.push(message);
 	}
-	if (options.system_prompt.len)
+	if (ctx.system_prompt.len)
 	{
-		Message system = { .role = "system", .content = options.system_prompt };
+		Message system = { .role = "system", .content = ctx.system_prompt };
 		messages.push_front(system);
 	}
-	Message user = { .role = "user", .content = options.user_input };
+	Message user = { .role = "user", .content = ctx.user_input };
 	messages.push(user);
 
 	// 本 turn 待落盘的记录：turn 记它在哪一轮，ts 记它发生的时刻。
@@ -119,23 +120,23 @@ fn int run(cli::Options* options)
 	pending.push({ .message = user, .turn = 1, .ts = session::timestamp(mem) });
 
 	bool with_tools = tools::registry_len != 0;
-	String session_note = persist ? string::format(tmem, " session=%s", options.session_id) : "";
-	String limit_note = options.max_turns > 0 ? string::format(tmem, "，max-turns=%d", options.max_turns) : "";
+	String session_note = persist ? string::format(tmem, " session=%s", ctx.session_id) : "";
+	String limit_note = ctx.max_turns > 0 ? string::format(tmem, "，max-turns=%d", ctx.max_turns) : "";
 	log::info("Trace 开始%s，model=%s，tools=%d%s",
-	          session_note, options.model, (int)tools::registry_len, limit_note);
+	          session_note, ctx.model, (int)tools::registry_len, limit_note);
 
 	usz turn = 0;
 	while LOOP: (true) @pool()
 	{
 		turn++;
 		// --max-turns：n>0 时最多发起 n 次请求；没给或 <=0 则不设上限
-		if (options.max_turns > 0 && turn > (usz)options.max_turns)
+		if (ctx.max_turns > 0 && turn > (usz)ctx.max_turns)
 		{
-			log::error("已达到 --max-turns=%d 上限，停止循环（本轮没有最终答案）", options.max_turns);
+			log::error("已达到 --max-turns=%d 上限，停止循环（本轮没有最终答案）", ctx.max_turns);
 			return cli::EXIT_UNCONVERGED;
 		}
 		Clock mark = clock::now();
-		ChatResponse response = chat_once(options, messages.to_array(tmem), with_tools);
+		ChatResponse response = chat_once(ctx, messages.to_array(tmem), with_tools);
 		if (!response.ok)
 		{
 			log::error("%s", response.error);
@@ -164,7 +165,7 @@ fn int run(cli::Options* options)
 			foreach (call : response.tool_calls)
 			{
 				Clock tool_mark = clock::now();
-				tools::ToolResult result = tools::run_tool(call.name, call.arguments);
+				tools::ToolResult result = tools::run_tool(ctx, call.name, call.arguments);
 				log::info("[turn %d] %s(%s) -> %s, %dms",
 				          turn, call.name, buf::truncate(call.arguments, 120),
 				          result.is_error ? "error" : "ok", elapsed_ms(&tool_mark));
