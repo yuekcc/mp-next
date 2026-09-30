@@ -3,11 +3,11 @@
   "properties": {
     "path": {
       "type": "string",
-      "description": "目录路径（默认当前目录）"
+      "description": "The path to the directory to list. Defaults to the current working directory. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
     },
     "limit": {
       "type": "number",
-      "description": "最多返回条目数（默认 500，<=0 不限制）"
+      "description": "Optional: Maximum number of items to return. Defaults to 500; set to 0 or less for no limit."
     }
   },
   "required": []

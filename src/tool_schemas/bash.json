@@ -3,7 +3,7 @@
   "properties": {
     "command": {
       "type": "string",
-      "description": "要执行的命令"
+      "description": "The exact bash command to execute."
     }
   },
   "required": ["command"]

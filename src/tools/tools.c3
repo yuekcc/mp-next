@@ -121,35 +121,48 @@ fn void register_builtin_tools()
 	// 只管把 ToolFn 的签名写全，这五个不用跟着再动一遍。
 	register_tool({
 		.name = "bash",
-		.description = "在用户机器上执行一条 bash 命令，回填 stdout/stderr 与退出码。"
-		               "输出截断到末 2000 行，截断前完整输出落盘到临时文件。各平台统一经 bash -c 执行，"
-		               "Windows 上使用 Git Bash。",
+		.description = "- Executes a system command in a controlled environment\n"
+		               "- Runs the command synchronously and returns stdout/stderr and the exit code\n"
+		               "- Automatically truncates large outputs to protect context window (keeps the last 2000 lines; the full output is written to a temp file whose path is reported)\n"
+		               "- Commands are always run through `bash -c`; on Windows this is Git Bash\n"
+		               "- Use this tool when you need to run shell commands, build scripts, run tests, or perform other system-level operations",
 		.parameters = $embed("../tool_schemas/bash.json"),
 		.execute = &run_bash,
 	});
 	register_tool({
 		.name = "edit_file",
-		.description = "把文件中的一段文本精确替换成另一段。old_string 必须精确匹配（含空白与换行）。"
-		               "默认要求唯一匹配，出现多次会报错且不修改；设 allow_multiple=true 可替换全部。",
+		.description = "- Performs precision string replacement in a file\n"
+		               "- Requires an exact match for 'old_string', including whitespace and line endings\n"
+		               "- Requires a unique match unless 'allow_multiple' is set; on multiple matches nothing is modified\n"
+		               "- Use this tool when you need to make surgical changes to specific parts of a file without rewriting it entirely",
 		.parameters = $embed("../tool_schemas/edit_file.json"),
 		.execute = &run_edit_file,
 	});
 	register_tool({
 		.name = "read_file",
-		.description = "读取一个文本文件并按行回填（行号前缀便于定位）。大文件用 offset/limit 分页。",
+		.description = "- Reads and returns the content of a specified file\n"
+		               "- Supports line-based slicing for reading specific portions of large files\n"
+		               "- Each content line is prefixed with its 1-based line number for reference\n"
+		               "- When using 'edit_file', provide the exact text WITHOUT the line-number prefix\n"
+		               "- Use this tool when you need to read the contents of a file to understand its logic or data",
 		.parameters = $embed("../tool_schemas/read_file.json"),
 		.execute = &run_read_file,
 	});
 	register_tool({
 		.name = "write_file",
-		.description = "把内容写入文件。文件不存在则创建，存在则覆盖；父目录必须已存在。",
+		.description = "- Writes complete content to a specified file\n"
+		               "- Overwrites the file if it already exists; missing parent directories are NOT created\n"
+		               "- Use this tool when you need to create a new file or fully overwrite an existing one",
 		.parameters = $embed("../tool_schemas/write_file.json"),
 		.execute = &run_write_file,
 	});
 	register_tool({
 		.name = "list_dir",
-		.description = "列举目录内容：目录在前、文件在后各按名排序，文件附大小；末行输出 Summary。"
-		               "默认最多 500 条，可用 limit 调整（<=0 不限制）。",
+		.description = "- Efficiently explores file system structure\n"
+		               "- Lists one directory level: directories first, then files, each sorted by name; files include their size\n"
+		               "- The last line reports a Summary with file/dir counts\n"
+		               "- Results are limited to 500 items by default; set limit to get more (<=0 means no limit)\n"
+		               "- Use this tool when you need to understand the directory structure or find files in a specific path",
 		.parameters = $embed("../tool_schemas/list_dir.json"),
 		.execute = &run_list_dir,
 	});

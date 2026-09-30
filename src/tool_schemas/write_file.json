@@ -3,11 +3,11 @@
   "properties": {
     "path": {
       "type": "string",
-      "description": "文件路径"
+      "description": "The path to the file to write."
     },
     "content": {
       "type": "string",
-      "description": "要写入的内容"
+      "description": "The complete content to write. Provide the full file; do not use placeholders."
     }
   },
   "required": ["path", "content"]

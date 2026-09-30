@@ -3,19 +3,19 @@
   "properties": {
     "path": {
       "type": "string",
-      "description": "目标文件路径"
+      "description": "The path to the file to modify."
     },
     "old_string": {
       "type": "string",
-      "description": "要被替换的原文（需精确匹配）"
+      "description": "The exact literal text to replace. Must match exactly, including whitespace and line endings."
     },
     "new_string": {
       "type": "string",
-      "description": "替换后的新文本"
+      "description": "The exact literal text to replace 'old_string' with."
     },
     "allow_multiple": {
       "type": "boolean",
-      "description": "true 时替换全部匹配，默认 false（要求唯一）"
+      "description": "Optional: If true, replace all occurrences of 'old_string'. Defaults to false, which requires a unique match."
     }
   },
   "required": ["path", "old_string", "new_string"]
