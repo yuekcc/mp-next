@@ -60,7 +60,7 @@ fn void test_append_and_load_roundtrip() @test
 		session::Record[] batch = {
 			{ .message = { .role = "user", .content = "问题" }, .turn = 1, .ts = session::timestamp(tmem) },
 			{ .message = { .role = "assistant", .content = "回答", .reasoning = "思考过程" }, .turn = 1, .ts = session::timestamp(tmem) },
-			{ .message = { .role = "tool", .content = "工具输出", .tool_call_id = "call_1" }, .turn = 1, .ts = session::timestamp(tmem) },
+			{ .message = { .role = "user", .content = "执行输出" }, .turn = 1, .ts = session::timestamp(tmem) },
 		};
 		session::append(&store, batch);
 	};
@@ -72,8 +72,8 @@ fn void test_append_and_load_roundtrip() @test
 		test::eq(loaded[0].role, "user");
 		test::eq(loaded[0].content, "问题");
 		test::eq(loaded[1].reasoning, "思考过程");
-		test::eq(loaded[2].tool_call_id, "call_1");
-		test::eq(loaded[2].content, "工具输出");
+		test::eq(loaded[2].role, "user");
+		test::eq(loaded[2].content, "执行输出");
 	};
 }
 
@@ -89,7 +89,7 @@ fn void test_append_keeps_per_message_turn() @test
 	{
 		session::Record[] batch = {
 			{ .message = { .role = "user", .content = "问" }, .turn = 1, .ts = FIXED_TS },
-			{ .message = { .role = "tool", .content = "工具输出", .tool_call_id = "call_1" }, .turn = 1, .ts = FIXED_TS },
+			{ .message = { .role = "user", .content = "执行输出" }, .turn = 1, .ts = FIXED_TS },
 			{ .message = { .role = "assistant", .content = "答" }, .turn = 2, .ts = FIXED_TS },
 		};
 		session::append(&store, batch);
@@ -101,8 +101,8 @@ fn void test_append_keeps_per_message_turn() @test
 	test::eq((int)lines.len, 3);
 	test::@check(lines[0].contains("\"turn\":1") && lines[0].contains("问"),
 	             "第 1 行（user）应记 turn 1，实际：%s", lines[0]);
-	test::@check(lines[1].contains("\"turn\":1") && lines[1].contains("工具输出"),
-	             "第 2 行（tool）应记 turn 1，实际：%s", lines[1]);
+	test::@check(lines[1].contains("\"turn\":1") && lines[1].contains("执行输出"),
+	             "第 2 行（user 执行输出）应记 turn 1，实际：%s", lines[1]);
 	test::@check(lines[2].contains("\"turn\":2") && lines[2].contains("答"),
 	             "第 3 行（assistant）应记 turn 2，实际：%s", lines[2]);
 }
@@ -146,7 +146,7 @@ fn void test_append_keeps_large_content() @test
 		DString big = dstring::new(tmem);
 		big.append_string_repeat("0123456789abcdef", 4096);
 		session::Record[] batch = {
-			{ .message = { .role = "tool", .content = big.str_view(), .tool_call_id = "call_big" }, .turn = 1, .ts = FIXED_TS },
+			{ .message = { .role = "user", .content = big.str_view() }, .turn = 1, .ts = FIXED_TS },
 		};
 		session::append(&store, batch);
 	};

@@ -19,6 +19,9 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 
 用法：llmcli --model <id> --api-key <key> [flags] [<prompt>]
 
+一次运行即一条 Trace：模型回复一个 ` +++ "```bash" +++ ` 代码块，本地以 bash 执行，
+输出作为下一条 user 消息回填，循环直到代码里设置 FINAL / FINAL_FILE——bash 是唯一的工具。
+
 输入（三选一，不能同时给）：
   <prompt>                 位置参数，直接写在命令行上
   stdin                    管道输入，如 cat x.md | llmcli ...
@@ -64,24 +67,22 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 会话存储：
   默认 %USERPROFILE%\.llmcli\sessions\<id>.jsonl（Linux/macOS 为 ~/.llmcli），
   根目录可用 --config-dir 覆盖；环境变量不参与决定存放位置。
-  文件按行记录完整对话（含工具输出与 reasoning_content），每个 turn 完整结束即追加，
+  文件按行记录完整对话（含执行输出与 reasoning_content），每个 turn 完整结束即追加，
   所以中断或报错时已完成的 turn 已经在文件里；v1 不提供清理功能，
   请自行删除对应文件。落盘内容可能含敏感信息，注意存放位置。
 
 风险提示：
-  内置 Bash 工具默认放行任意命令，提示注入或模型误判可导致任意代码执行。
-  每次调用的命令原文都会打印到 stderr 供审计。默认不设 turn 上限、不设超时、
+  模型生成的 bash 代码默认放行任意命令，提示注入或模型误判可导致任意代码执行。
+  每轮执行的代码原文都会打印到 stderr 供审计。默认不设 turn 上限、不设超时、
   不截断工具输出；不设 --max-turns 时失控请用 Ctrl+C 中断，CI 中请用外部超时
   （如 timeout 60 llmcli ... 或 job timeout）包裹。
 
 CI/脚本集成：
   无需任何交互输入；stdout 只包含最终答案，可直接重定向或交给 jq。
-  输出不是终端时不使用 ANSI 颜色。
-
-文档：docs/tools.md（如何新增工具）`;
+  输出不是终端时不使用 ANSI 颜色。`;
 
 // 一次运行（一个 Trace）的全部配置。经函数参数向下传递，不是全局：
-// 同一进程内换一份 Ctx 再跑一次是合法用法（subagent 的受限工具集、skill 的提示词注入）。
+// 同一进程内换一份 Ctx 再跑一次是合法用法（比如给后续的子运行换一套提示词或边界）。
 //
 // 字段分四类。新增字段必须先归入某一类，别让它退化回"什么都往里塞"的篮子。
 struct Ctx

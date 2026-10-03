@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""llmcli 端到端回归：对着 scripts/mock_llm.py 跑 PRD 里的验收场景。
+"""llmcli 端到端回归：对着 scripts/mock_llm.py 跑 shellm 式 RLM 循环的场景。
 
     python scripts/regress.py                # 跑全部场景
     python scripts/regress.py --verbose      # 额外打印每个场景的 stdout/stderr
@@ -108,10 +108,15 @@ def check(name, condition, detail=""):
     return condition
 
 
+def fwd(path):
+    """把 Windows 路径转成正斜杠，便于嵌进 bash 命令。"""
+    return path.replace("\\", "/")
+
+
 # --------------------------------------------------------------------------- 场景
 
 def s1_single_turn(mock, verbose):
-    """AC: 单轮问答成功；stdout 无日志；三路输入互斥。"""
+    """AC: 单轮问答成功（无代码块 → 整段回复即答案）；stdout 无日志；三路输入互斥。"""
     mock.reset()
     proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url],
                    stdin_text="hello world")
@@ -173,65 +178,69 @@ def s1_help(mock):
           proc.stdout.startswith("llmcli") and "退出码" in proc.stdout and "0  成功" in proc.stdout)
     check("S1 --help：列出会话路径与风险提示",
           ".llmcli" in proc.stdout and "风险提示" in proc.stdout)
+    check("S1 --help：说明 FINAL / FINAL_FILE 报捷", "FINAL" in proc.stdout, proc.stdout[:200])
 
 
-def s2_tool_loop(mock):
-    """AC: tool_calls -> 执行工具 -> 回填 -> stop。"""
+def s2_block_loop(mock):
+    """AC: 代码块 → 本地执行 → 输出作为下一条 user 消息回填 → 无代码块回复收尾。"""
     mock.reset()
     proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url],
                    stdin_text="run the tool")
-    check("S2 工具循环：退出码 0", proc.returncode == 0, proc.stderr)
-    check("S2 工具循环：stdout 只有最终答案", proc.stdout.strip() == "final answer", repr(proc.stdout))
-    check("S2 工具循环：命令原文打印到 stderr（可审计）",
-          "echo hello-from-tool" in proc.stderr, repr(proc.stderr))
-    check("S2 工具循环：每轮 turn 摘要在 stderr",
+    check("S2 代码块循环：退出码 0", proc.returncode == 0, proc.stderr)
+    check("S2 代码块循环：stdout 只有最终答案", proc.stdout.strip() == "final answer", repr(proc.stdout))
+    check("S2 代码块循环：执行输出打印到 stderr",
+          "hello-from-tool" in proc.stderr, repr(proc.stderr))
+    check("S2 代码块循环：每轮 turn 摘要在 stderr",
           "[turn 1]" in proc.stderr and "[turn 2]" in proc.stderr, repr(proc.stderr))
-    check("S2 工具循环：每轮都打 token 用量（含工具轮）",
+    check("S2 代码块循环：每轮都打 token 用量",
           proc.stderr.count("prompt=11") >= 2, repr(proc.stderr))
 
     requests = mock.requests()
-    check("S2 工具循环：共 2 次请求", len(requests) == 2, str(len(requests)))
+    check("S2 代码块循环：共 2 次请求", len(requests) == 2, str(len(requests)))
     if len(requests) >= 2:
         second = requests[1]
         roles = [m["role"] for m in second["messages"]]
-        check("S2 工具循环：第二次请求带 system+history+tool 回填",
-              roles == ["system", "user", "assistant", "tool"], str(roles))
-        tool_message = second["messages"][-1]
-        check("S2 工具循环：tool 消息含 tool_call_id 与实际输出",
-              tool_message.get("tool_call_id") == "call_1"
-              and "hello-from-tool" in (tool_message.get("content") or ""),
-              json.dumps(tool_message, ensure_ascii=False))
+        check("S2 代码块循环：第二次请求带 system+history+执行输出",
+              roles == ["system", "user", "assistant", "user"], str(roles))
+        observation = second["messages"][-1]
+        check("S2 代码块循环：执行输出作为 user 消息回填",
+              observation["role"] == "user" and "hello-from-tool" in (observation.get("content") or ""),
+              json.dumps(observation, ensure_ascii=False))
         check("S2 请求体 stream=false", second.get("stream") is False, str(second.get("stream")))
-        check("S2 请求体带 tools 定义", bool(second.get("tools")))
+        check("S2 请求体不带 tools（RLM 不用 tools 协议）", "tools" not in second, str(second.keys()))
 
 
-def s2_edit_task(mock, run_index):
-    """PRD 成功指标：读文件 -> 改文件 -> 收尾。"""
-    work = os.path.join(WORK, "work")
-    os.makedirs(work, exist_ok=True)
-    sample = os.path.join(work, "sample.txt")
-    with open(sample, "w", encoding="utf-8") as fh:
-        fh.write("line one\nold-text\nline three\n")
-
-    mock.reset()
-    proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url],
-                   stdin_text="把 old-text 改成 new-text")
-    with open(sample, "r", encoding="utf-8") as fh:
-        content = fh.read()
-    ok = (proc.returncode == 0
-          and content == "line one\nnew-text\nline three\n"
-          and proc.stdout.strip().endswith("sample.txt"))
-    if run_index == 1:
-        # mock 的 edit_task 第一轮带 reasoning_content，工具轮也要给字符数
-        check("S2 edit_task：工具轮的摘要带 reasoning 字符数",
-              "reasoning 21 字符" in proc.stderr, repr(proc.stderr))
-    check("S2 edit_task #%d：退出码 0 + 文件被改对 + 有最终答案" % run_index, ok,
-          "exit=%d stdout=%r file=%r stderr=%s" % (proc.returncode, proc.stdout, content,
-                                                   proc.stderr))
-    return ok
+def s2_block_final(mock):
+    """AC: 代码里设 FINAL 当场结束，stdout 为 FINAL 的值。"""
+    server = Mock("block_final", port=PORT + 14)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="算一下")
+        check("S2 FINAL：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 FINAL：stdout 为 FINAL 的值", proc.stdout.strip() == "final answer", repr(proc.stdout))
+        check("S2 FINAL：一次请求即收尾", len(server.requests()) == 1, str(len(server.requests())))
+    finally:
+        server.stop()
 
 
-def s2_error_paths(mock):
+def s2_multi_block():
+    """AC: 回复含多个代码块时只执行第一个，其余丢弃并告警。"""
+    server = Mock("multi_block", port=PORT + 15)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="多块")
+        check("S2 多代码块：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 多代码块：只执行第一个块（second 未被执行）",
+              "first" in proc.stderr and "second" not in proc.stderr, repr(proc.stderr))
+        check("S2 多代码块：stderr 告警只执行第一个",
+              "只执行第一个" in proc.stderr, repr(proc.stderr[-400:]))
+    finally:
+        server.stop()
+
+
+def s2_error_paths():
     """AC: 协议错误/HTTP 错误/无答案 分别对应退出码。"""
     bad = Mock("bad_json", port=PORT + 1)
     try:
@@ -260,8 +269,8 @@ def s2_error_paths(mock):
         empty.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", empty.base_url],
                        stdin_text="x")
-        check("S2 无最终答案：退出码 3", proc.returncode == 3, "exit=%d" % proc.returncode)
-        check("S2 无最终答案：stdout 为空", proc.stdout == "", repr(proc.stdout))
+        check("S2 空响应：退出码 3", proc.returncode == 3, "exit=%d" % proc.returncode)
+        check("S2 空响应：stdout 为空", proc.stdout == "", repr(proc.stdout))
     finally:
         empty.stop()
 
@@ -288,12 +297,12 @@ def s3_sessions(mock, verbose):
     if os.path.exists(session_file):
         with open(session_file, "r", encoding="utf-8") as fh:
             records = [json.loads(line) for line in fh if line.strip()]
-    check("S3 落盘包含 user/assistant/tool 三类消息",
-          {r["message"]["role"] for r in records} >= {"user", "assistant", "tool"},
+    check("S3 落盘是 user/assistant 交替",
+          {r["message"]["role"] for r in records} == {"user", "assistant"},
           str([r["message"]["role"] for r in records]))
     check("S3 每条记录都有 ts/turn/message",
           all({"ts", "turn", "message"} <= set(r) for r in records))
-    check("S3 turn 归属：输入与 turn 1 的工具消息记 1，最终答案记 2",
+    check("S3 turn 归属：决策与执行输出记 1，收尾答案记 2",
           [r["turn"] for r in records] == [1, 1, 1, 2],
           str([(r["message"]["role"], r["turn"]) for r in records]))
     check("S3 系统提示词不入库（每次运行重新注入）",
@@ -338,60 +347,16 @@ def s3_sessions(mock, verbose):
         print("    (S3 records=%d stderr=%s)" % (len(records), second.stderr))
 
 
-def s3_turn_per_round(mock):
-    """AC: turn 记消息所在的那一轮；两轮工具调用的 Trace -> 1,1,1,2,2,3。"""
-    home = os.path.join(WORK, "turn_home")
-    shutil.rmtree(home, ignore_errors=True)
-    work = os.path.join(WORK, "work")
-    os.makedirs(work, exist_ok=True)
-    with open(os.path.join(work, "sample.txt"), "w", encoding="utf-8") as fh:
-        fh.write("line one\nold-text\nline three\n")
-
-    mock.reset()
-    proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url,
-                    "--session-id", "turns"], stdin_text="把 old-text 改成 new-text", home=home)
-    check("S3 多轮 turn：退出码 0", proc.returncode == 0, proc.stderr)
-
-    session_file = os.path.join(home, "sessions", "turns.jsonl")
-    with open(session_file, "r", encoding="utf-8") as fh:
-        records = [json.loads(line) for line in fh if line.strip()]
-    check("S3 多轮 turn：两轮工具调用按 1,1,1,2,2,3 归属",
-          [r["turn"] for r in records] == [1, 1, 1, 2, 2, 3],
-          str([(r["message"]["role"], r["turn"]) for r in records]))
-
-
-def s3_timestamp_per_message():
-    """AC: ts 是消息发生的时刻，不是落盘那一刻。工具跑够 2 秒，首尾记录必须落在不同秒上。"""
-    home = os.path.join(WORK, "stamp_home")
-    shutil.rmtree(home, ignore_errors=True)
-    server = Mock("slow_command", replace={"{{SLEEP}}": "sleep 2"}, port=PORT + 11)
-    try:
-        server.reset()
-        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
-                        "--session-id", "stamps"], stdin_text="先睡两秒", home=home)
-        check("S3 ts 归属：退出码 0", proc.returncode == 0, proc.stderr)
-
-        session_file = os.path.join(home, "sessions", "stamps.jsonl")
-        with open(session_file, "r", encoding="utf-8") as fh:
-            records = [json.loads(line) for line in fh if line.strip()]
-        stamps = [r["ts"] for r in records]
-        check("S3 ts 归属：工具前后的记录落在不同时刻（整批共用一个落盘时间就会红）",
-              len(set(stamps)) > 1,
-              str([(r["message"]["role"], r["ts"]) for r in records]))
-    finally:
-        server.stop()
-
-
 def s3_persist_per_turn():
-    """AC: 每个 turn 完整结束后立刻落盘——未收敛的 Trace 也留下已完成的 turn，且不留半截 turn。"""
+    """AC: 每个 turn 完整结束后立刻落盘——未收敛的 Trace 也留下已完成的 turn。"""
     home = os.path.join(WORK, "persist_home")
     shutil.rmtree(home, ignore_errors=True)
-    server = Mock("always_tools", port=PORT + 12)
+    server = Mock("always_blocks", port=PORT + 12)
     try:
         server.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
                         "--max-turns", "2", "--session-id", "persist"],
-                       stdin_text="一直调用工具", home=home)
+                       stdin_text="一直写代码", home=home)
         check("S3 逐 turn 落盘：未收敛时退出码 3", proc.returncode == 3, "exit=%d" % proc.returncode)
 
         session_file = os.path.join(home, "sessions", "persist.jsonl")
@@ -402,36 +367,36 @@ def s3_persist_per_turn():
             with open(session_file, "r", encoding="utf-8") as fh:
                 records = [json.loads(line) for line in fh if line.strip()]
         roles = [r["message"]["role"] for r in records]
-        check("S3 逐 turn 落盘：两个 turn 的决策与工具结果都在",
-              roles == ["user", "assistant", "tool", "assistant", "tool"], str(roles))
-        check("S3 逐 turn 落盘：文件停在完整 turn 上（不留没有工具结果的 tool_calls）",
-              bool(records) and roles[-1] == "tool", str(roles))
+        check("S3 逐 turn 落盘：两个 turn 的决策与执行输出都在",
+              roles == ["user", "assistant", "user", "assistant", "user"], str(roles))
+        check("S3 逐 turn 落盘：turn 归属 1,1,1,2,2",
+              [r["turn"] for r in records] == [1, 1, 1, 2, 2],
+              str([(r["message"]["role"], r["turn"]) for r in records]))
 
-        # 续话能读到这份前缀：历史里的每个 tool_calls 都有对应的 tool 消息
+        # 续话能读到这份前缀
         server.reset()
         resumed = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
                            "--max-turns", "1", "--session-id", "persist"],
                           stdin_text="继续", home=home)
         check("S3 逐 turn 落盘：续话按退出码 3 停下", resumed.returncode == 3, resumed.stderr)
-        check("S3 逐 turn 落盘：读回部分历史时没有坏行告警（每批一次 write，不撕裂行）",
+        check("S3 逐 turn 落盘：读回部分历史时没有坏行告警",
               "无法解析" not in resumed.stderr, repr(resumed.stderr[-400:]))
         requests = server.requests()
         history = requests[-1].get("messages", []) if requests else []
         check("S3 逐 turn 落盘：续话请求带回已落盘的两个 turn",
-              [m.get("role") for m in history] == ["system", "user", "assistant", "tool",
-                                                   "assistant", "tool", "user"],
+              [m.get("role") for m in history] == ["system", "user", "assistant", "user",
+                                                   "assistant", "user", "user"],
               str([m.get("role") for m in history]))
     finally:
         server.stop()
 
 
 def s3_persist_mid_trace():
-    """AC: 落盘发生在 Trace 结束之前。turn 2 的工具去读会话文件，必须已经能看到 turn 1。"""
+    """AC: 落盘发生在 Trace 结束之前。turn 2 的代码去读会话文件，必须已经看得到 turn 1。"""
     home = os.path.join(WORK, "midtrace_home")
     shutil.rmtree(home, ignore_errors=True)
     session_file = os.path.join(home, "sessions", "midtrace.jsonl")
-    server = Mock("two_bash_calls", replace={"{{CMD}}": 'cat "%s"' % session_file},
-                  port=PORT + 13)
+    server = Mock("two_bash_calls", replace={"{{SESSION}}": fwd(session_file)}, port=PORT + 13)
     try:
         server.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
@@ -440,15 +405,16 @@ def s3_persist_mid_trace():
 
         with open(session_file, "r", encoding="utf-8") as fh:
             records = [json.loads(line) for line in fh if line.strip()]
+        # 记录：user, assistant, 执行输出, assistant, 执行输出(cat), assistant(收尾)
         second_tool = records[4]["message"].get("content") or ""
-        check("S3 中途落盘：turn 2 的工具已读到 turn 1 的记录（整批留到 Trace 结束才会红）",
+        check("S3 中途落盘：turn 2 的代码已读到 turn 1 的记录（整批留到 Trace 结束才会红）",
               '"turn":1' in second_tool and '"role":"user"' in second_tool,
               repr(second_tool[:400]))
     finally:
         server.stop()
 
 
-def s3_reasoning(mock):
+def s3_reasoning():
     """AC: reasoning_content 落盘、stderr 只打长度摘要、stdout 无泄漏。"""
     home = os.path.join(WORK, "reasoning_home")
     shutil.rmtree(home, ignore_errors=True)
@@ -484,100 +450,6 @@ def s3_reasoning(mock):
         server.stop()
 
 
-def s2_unknown_tool(mock):
-    """未知工具 / 参数非法要回填给 LLM 并继续。"""
-    server = Mock("unknown_tool", port=PORT + 5)
-    try:
-        server.reset()
-        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
-                       stdin_text="x")
-        check("S2 未知工具：回填错误后仍收敛", proc.returncode == 0, proc.stderr)
-        requests = server.requests()
-        if len(requests) >= 2:
-            tool_message = requests[1]["messages"][-1]
-            check("S2 未知工具：错误文本回填给 LLM",
-                  "未知工具" in (tool_message.get("content") or ""),
-                  json.dumps(tool_message, ensure_ascii=False))
-        else:
-            check("S2 未知工具：错误文本回填给 LLM", False, "只有 %d 次请求" % len(requests))
-    finally:
-        server.stop()
-
-
-def s2_fragmented_tool():
-    """AC: 兼容端点把一次调用拆成分片（靠 index 关联）时，客户端归并后正确执行。"""
-    work = os.path.join(WORK, "frag")
-    os.makedirs(work, exist_ok=True)
-    # 分片里嵌的是 JSON 字符串，路径反斜杠必须先转义（json.dumps 后去掉首尾引号）
-    escaped = json.dumps(work)[1:-1]
-    server = Mock("fragmented_tool", replace={"{{DIR}}": escaped}, port=PORT + 11)
-    try:
-        server.reset()
-        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
-                       stdin_text="列出当前目录")
-        check("S2 分片 tool_calls：退出码 0", proc.returncode == 0, proc.stderr)
-        check("S2 分片 tool_calls：stdout 只有最终答案",
-              proc.stdout.strip() == "done listing", repr(proc.stdout))
-        check("S2 分片 tool_calls：没有把分片当独立工具（无未知工具回填）",
-              "未知工具" not in proc.stderr, repr(proc.stderr[-800:]))
-
-        requests = server.requests()
-        if len(requests) >= 2:
-            assistant = [m for m in requests[1]["messages"] if m.get("role") == "assistant"]
-            calls = assistant[0].get("tool_calls", []) if assistant else []
-            check("S2 分片 tool_calls：归并后只剩 1 个调用", len(calls) == 1,
-                  json.dumps(calls, ensure_ascii=False))
-            if len(calls) == 1:
-                fn = calls[0].get("function", {})
-                args = json.loads(fn.get("arguments") or "{}")
-                check("S2 分片 tool_calls：name 与 arguments 正确还原",
-                      fn.get("name") == "list_dir" and os.path.normpath(args.get("path", "")) == work,
-                      json.dumps(calls[0], ensure_ascii=False))
-            tools = [m for m in requests[1]["messages"] if m.get("role") == "tool"]
-            check("S2 分片 tool_calls：只回填 1 条 tool 消息且带 tool_call_id",
-                  len(tools) == 1 and tools[0].get("tool_call_id") == "call_1"
-                  and "Summary" in (tools[0].get("content") or ""),
-                  json.dumps(tools, ensure_ascii=False))
-        else:
-            check("S2 分片 tool_calls：发起了第二轮请求", False, "只有 %d 次请求" % len(requests))
-    finally:
-        server.stop()
-
-
-def s2_parallel_fragmented():
-    """AC: 多个并行调用各自分片时，按 index 独立归并，互不串联。"""
-    server = Mock("parallel_fragmented", port=PORT + 12)
-    try:
-        server.reset()
-        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
-                       stdin_text="并行跑两个命令")
-        check("S2 并行分片：退出码 0", proc.returncode == 0, proc.stderr)
-        check("S2 并行分片：stdout 只有最终答案",
-              proc.stdout.strip() == "done parallel", repr(proc.stdout))
-
-        requests = server.requests()
-        if len(requests) >= 2:
-            assistant = [m for m in requests[1]["messages"] if m.get("role") == "assistant"]
-            calls = assistant[0].get("tool_calls", []) if assistant else []
-            check("S2 并行分片：归并成 2 个调用", len(calls) == 2,
-                  json.dumps(calls, ensure_ascii=False))
-            if len(calls) == 2:
-                args = [json.loads(c["function"].get("arguments") or "{}") for c in calls]
-                check("S2 并行分片：两边 arguments 各自完整、未串联",
-                      args[0].get("command") == "echo A" and args[1].get("command") == "echo B",
-                      json.dumps(args, ensure_ascii=False))
-            tools = [m for m in requests[1]["messages"] if m.get("role") == "tool"]
-            contents = {m.get("tool_call_id"): (m.get("content") or "") for m in tools}
-            check("S2 并行分片：两条 tool 结果按 id 正确对应",
-                  len(tools) == 2 and "echo A" in contents.get("call_a", "")
-                  and "A" in contents.get("call_a", "") and "B" in contents.get("call_b", ""),
-                  json.dumps(tools, ensure_ascii=False))
-        else:
-            check("S2 并行分片：发起了第二轮请求", False, "只有 %d 次请求" % len(requests))
-    finally:
-        server.stop()
-
-
 def s4_ci_hygiene(mock):
     """AC: 输出非终端时不出现 ANSI 颜色；stdout 可重定向。"""
     mock.reset()
@@ -590,26 +462,6 @@ def s4_ci_hygiene(mock):
     proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url,
                     "--no-color"], stdin_text="x")
     check("S4 --no-color：可正常执行", proc.returncode == 0, proc.stderr)
-
-
-def s2_bad_arguments():
-    """AC: 参数 JSON 非法要回填错误给 LLM。"""
-    server = Mock("bad_arguments", port=PORT + 8)
-    try:
-        server.reset()
-        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
-                       stdin_text="x")
-        check("S2 参数非法：回填错误后仍收敛", proc.returncode == 0, proc.stderr)
-        requests = server.requests()
-        if len(requests) >= 2:
-            tool_message = requests[1]["messages"][-1]
-            check("S2 参数非法：错误文本回填给 LLM",
-                  "command" in (tool_message.get("content") or ""),
-                  json.dumps(tool_message, ensure_ascii=False))
-        else:
-            check("S2 参数非法：错误文本回填给 LLM", False, "只有 %d 次请求" % len(requests))
-    finally:
-        server.stop()
 
 
 def count_process(image):
@@ -650,7 +502,7 @@ def s2_interrupt():
         proc.stdin.write(b"go\n")
         proc.stdin.close()
 
-        # 等 bash 工具真的把子进程拉起来
+        # 等生成的代码真的把子进程拉起来
         started = False
         for _ in range(60):
             if count_process(image) > baseline:
@@ -681,7 +533,7 @@ def s2_interrupt():
 
 def s5_max_turns():
     """AC: --max-turns n>0 时最多 n 次请求；达到上限则 stderr 说明、stdout 空、退出码 3。"""
-    server = Mock("always_tools", port=PORT + 10)
+    server = Mock("always_blocks", port=PORT + 10)
     try:
         server.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
@@ -710,10 +562,40 @@ def s5_max_turns():
         except subprocess.TimeoutExpired:
             unlimited_returncode = None  # 5 秒都没跑完 → 确实没有上限
         check("S5 不给 --max-turns：不设上限（5 秒内未自行止损）",
-              unlimited_returncode is None and len(server.requests()) > 3,
+              unlimited_returncode is None and len(server.requests()) > 1,
               "returncode=%s requests=%d" % (unlimited_returncode, len(server.requests())))
     finally:
         server.stop()
+
+
+def s2_edit_task(run_index):
+    """PRD 成功指标：读文件 -> 改文件 -> FINAL。"""
+    work = os.path.join(WORK, "work")
+    os.makedirs(work, exist_ok=True)
+    sample = os.path.join(work, "sample.txt")
+    with open(sample, "w", encoding="utf-8") as fh:
+        fh.write("line one\nold-text\nline three\n")
+
+    mock = Mock("edit_task", replace={"{{FILE}}": fwd(sample)}, port=PORT + 6)
+    try:
+        mock.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url],
+                       stdin_text="把 old-text 改成 new-text")
+        with open(sample, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        ok = (proc.returncode == 0
+              and content == "line one\nnew-text\nline three\n"
+              and proc.stdout.strip().endswith("sample.txt"))
+        if run_index == 1:
+            # mock 的 edit_task 第一轮带 reasoning_content，工具轮也要给字符数
+            check("S2 edit_task：代码轮的摘要带 reasoning 字符数",
+                  "reasoning 21 字符" in proc.stderr, repr(proc.stderr))
+        check("S2 edit_task #%d：退出码 0 + 文件被改对 + 有最终答案" % run_index, ok,
+              "exit=%d stdout=%r file=%r stderr=%s" % (proc.returncode, proc.stdout, content,
+                                                       proc.stderr))
+        return ok
+    finally:
+        mock.stop()
 
 
 def main():
@@ -726,34 +608,25 @@ def main():
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(WORK, exist_ok=True)
     simple_mock = Mock("simple", port=PORT + 7)
-    mock = Mock("tool_loop")
-    edit_mock = Mock(
-        "edit_task",
-        replace={"{{FILE}}": os.path.join(WORK, "work", "sample.txt")},
-        port=PORT + 6,
-    )
+    mock = Mock("block_loop")
     try:
         s1_help(simple_mock)
         s1_single_turn(simple_mock, args.verbose)
-        s2_tool_loop(mock)
-        s2_error_paths(mock)
+        s2_block_loop(mock)
+        s2_block_final(mock)
+        s2_multi_block()
+        s2_error_paths()
         s3_sessions(mock, args.verbose)
-        s3_turn_per_round(edit_mock)
-        s3_timestamp_per_message()
         s3_persist_per_turn()
         s3_persist_mid_trace()
-        s3_reasoning(mock)
-        s2_unknown_tool(mock)
-        s2_bad_arguments()
-        s2_fragmented_tool()
-        s2_parallel_fragmented()
+        s3_reasoning()
         s4_ci_hygiene(mock)
         s2_interrupt()
         s5_max_turns()
 
         wins = 0
         for index in range(1, args.repetitions + 1):
-            if s2_edit_task(edit_mock, index):
+            if s2_edit_task(index):
                 wins += 1
         rate = wins / args.repetitions
         check("S2 edit_task 成功率 %d/%d (%.0f%%) >= 90%%" % (wins, args.repetitions, rate * 100),
@@ -761,7 +634,6 @@ def main():
     finally:
         simple_mock.stop()
         mock.stop()
-        edit_mock.stop()
 
     failed = [name for name, ok, _ in RESULTS if not ok]
     print("\n%d 项检查，%d 项失败" % (len(RESULTS), len(failed)))

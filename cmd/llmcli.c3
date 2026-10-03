@@ -1,7 +1,7 @@
 module llmcli;
 
 import std::io;
-import llmcli::agent, llmcli::cli, llmcli::http, llmcli::log, llmcli::session, llmcli::tools;
+import llmcli::agent, llmcli::cli, llmcli::http, llmcli::log, llmcli::runtime, llmcli::session;
 
 fn int list_sessions()
 {
@@ -39,7 +39,7 @@ fn int main(String[] args)
 	}
 	if (parsed.ctx.list_sessions) return list_sessions();
 
-	tools::install_interrupt_handler();
+	runtime::install_interrupt_handler();
 
 	http::http_init();
 	defer http::http_deinit();

@@ -2,7 +2,7 @@ module llmcli::test_chat;
 
 import std::io;
 import cjson;
-import llmcli::buf, llmcli::chat, llmcli::cli, llmcli::agent, llmcli::tools;
+import llmcli::buf, llmcli::chat, llmcli::cli, llmcli::agent;
 
 fn void test_parse_stop_with_content() @test
 {
@@ -13,85 +13,6 @@ fn void test_parse_stop_with_content() @test
 		test::eq(parsed.ok, true);
 		test::eq(parsed.content, "hello");
 		test::eq(parsed.finish_reason, "stop");
-		test::eq((int)parsed.tool_calls.len, 0);
-	};
-}
-
-fn void test_parse_tool_calls() @test
-{
-	@pool()
-	{
-		String body = `{"choices":[{"message":{"role":"assistant","content":null,` +++
-		              `"tool_calls":[{"id":"call_1","type":"function","function":` +++
-		              `{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},` +++
-		              `"finish_reason":"tool_calls"}]}`;
-		ChatResponse parsed = chat::parse_response(tmem, body);
-		test::eq(parsed.ok, true);
-		test::eq(parsed.finish_reason, "tool_calls");
-		test::eq((int)parsed.tool_calls.len, 1);
-		test::eq(parsed.tool_calls[0].id, "call_1");
-		test::eq(parsed.tool_calls[0].name, "bash");
-		test::eq(parsed.tool_calls[0].arguments, `{"command":"ls"}`);
-	};
-}
-
-// 分片形态：一次调用被拆成多元素、name/arguments 分散、靠 index=0 关联。
-fn void test_parse_merges_fragmented_tool_call() @test
-{
-	@pool()
-	{
-		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
-		              `{"id":"call_1","type":"function","index":0,` +++
-		              `"function":{"name":"list_dir","arguments":""}},` +++
-		              `{"index":0,"function":{"arguments":"{\"path\": \""}},` +++
-		              `{"index":0,"function":{"arguments":"Z:\\\\proj"}},` +++
-		              `{"index":0,"function":{"arguments":"\"}"}}]},` +++
-		              `"finish_reason":"tool_calls"}]}`;
-		ChatResponse parsed = chat::parse_response(tmem, body);
-		test::eq(parsed.ok, true);
-		test::eq((int)parsed.tool_calls.len, 1);
-		test::eq(parsed.tool_calls[0].name, "list_dir");
-		test::eq(parsed.tool_calls[0].arguments, `{"path": "Z:\\proj"}`);
-	};
-}
-
-// 并行分片：两个 index 各自归并，互不串联。
-fn void test_parse_merges_parallel_fragmented_tool_calls() @test
-{
-	@pool()
-	{
-		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
-		              `{"id":"call_a","index":0,"function":{"name":"bash","arguments":"{\"comm"}},` +++
-		              `{"id":"call_b","index":1,"function":{"name":"bash","arguments":"{\"comm"}},` +++
-		              `{"index":0,"function":{"arguments":"and\": \"echo A\"}"}},` +++
-		              `{"index":1,"function":{"arguments":"and\": \"echo B\"}"}}]},` +++
-		              `"finish_reason":"tool_calls"}]}`;
-		ChatResponse parsed = chat::parse_response(tmem, body);
-		test::eq(parsed.ok, true);
-		test::eq((int)parsed.tool_calls.len, 2);
-		test::eq(parsed.tool_calls[0].id, "call_a");
-		test::eq(parsed.tool_calls[0].arguments, `{"command": "echo A"}`);
-		test::eq(parsed.tool_calls[1].id, "call_b");
-		test::eq(parsed.tool_calls[1].arguments, `{"command": "echo B"}`);
-	};
-}
-
-// 非流式的并行完整调用没有 index，必须保持逐元素语义，不能被错误归并。
-fn void test_parse_keeps_indexless_parallel_tool_calls() @test
-{
-	@pool()
-	{
-		String body = `{"choices":[{"message":{"role":"assistant","tool_calls":[` +++
-		              `{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo A\"}"}},` +++
-		              `{"id":"call_b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo B\"}"}}]},` +++
-		              `"finish_reason":"tool_calls"}]}`;
-		ChatResponse parsed = chat::parse_response(tmem, body);
-		test::eq(parsed.ok, true);
-		test::eq((int)parsed.tool_calls.len, 2);
-		test::eq(parsed.tool_calls[0].id, "call_a");
-		test::eq(parsed.tool_calls[1].id, "call_b");
-		test::eq(parsed.tool_calls[0].arguments, `{"command":"echo A"}`);
-		test::eq(parsed.tool_calls[1].arguments, `{"command":"echo B"}`);
 	};
 }
 
@@ -142,7 +63,7 @@ fn void test_request_strips_reasoning_content() @test
 		};
 		Message[] messages = { assistant };
 
-		String body = agent::build_request(&ctx, messages, false);
+		String body = agent::build_request(&ctx, messages);
 		test::@check(!body.contains("reasoning_content"),
 		             "请求体不能带 reasoning_content，实际：%s", body);
 		test::@check(body.contains(`"stream":false`), "stream 必须是 false，实际：%s", body);
@@ -150,36 +71,20 @@ fn void test_request_strips_reasoning_content() @test
 		CJsonItem* root = cjson::parse_with_length((ZString)body.ptr, body.len);
 		CJsonItem* array = root.get_key("messages");
 		test::eq((int)array.get_len(), 1);
+		// RLM 循环不用 tools 协议：请求体里不应出现 tools
 		test::eq(root.has_key("tools"), false);
 		root.free();
 	};
 }
 
-fn void test_request_includes_tools_when_registered() @test
+fn void test_message_json_roundtrip_keeps_reasoning() @test
 {
 	@pool()
 	{
-		cli::Ctx ctx;
-		ctx.model = "m";
-		Message user = { .role = "user", .content = "hi" };
-		Message[] messages = { user };
-
-		String body = agent::build_request(&ctx, messages, true);
-		test::@check(body.contains(`"tools"`), "启用工具时应带 tools 字段，实际：%s", body);
-		test::@check(body.contains(`"bash"`), "应包含 bash 工具定义，实际：%s", body);
-	};
-}
-
-fn void test_message_json_roundtrip_keeps_reasoning_and_tool_calls() @test
-{
-	@pool()
-	{
-		ToolCall[] calls = { { .id = "call_9", .name = "bash", .arguments = "{}" } };
 		Message original = {
 			.role = "assistant",
 			.content = "c",
 			.reasoning = "r",
-			.tool_calls = calls,
 		};
 
 		CJsonItem* json = chat::message_to_archive_json(&original);
@@ -193,7 +98,5 @@ fn void test_message_json_roundtrip_keeps_reasoning_and_tool_calls() @test
 		test::eq(restored.role, "assistant");
 		test::eq(restored.content, "c");
 		test::eq(restored.reasoning, "r");
-		test::eq((int)restored.tool_calls.len, 1);
-		test::eq(restored.tool_calls[0].name, "bash");
 	};
 }

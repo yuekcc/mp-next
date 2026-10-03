@@ -4,30 +4,33 @@
 只实现 POST /v1/chat/completions（非流式）与 GET /health。
 响应按"脚本"依次返回：第 N 次请求返回脚本第 N 条，脚本用完后重复最后一条。
 
+llmcli 是 shellm 式 RLM 循环：模型回复一个 ```bash 代码块，本地执行后把输出作为
+下一条 user 消息回填，直到代码里设置 FINAL / FINAL_FILE；没有代码块的回复即最终答案。
+所以脚本条目就是"每一轮模型的回复文本"。
+
 用法：
-    python scripts/mock_llm.py --port 8123 --scenario tool_loop
+    python scripts/mock_llm.py --port 8123 --scenario block_loop
     python scripts/mock_llm.py --port 8123 --script my_turns.json
 
 脚本格式（JSON 数组），每条是 choices[0].message 的补丁：
     [
-      {"finish_reason": "tool_calls",
-       "tool_calls": [{"id": "call_1", "name": "bash", "arguments": {"command": "echo hi"}}]},
+      {"finish_reason": "stop", "content": "```bash\\necho hi\\n```"},
       {"finish_reason": "stop", "content": "done", "reasoning_content": "思考中"}
     ]
-`arguments` 会被序列化成 JSON 字符串（OpenAI 协议中 tool_call.function.arguments 是字符串）。
+content 里的 {{PLACEHOLDER}} 可用 --replace k=v 替换。
 
 内置 scenario：
-    simple      单轮，回显最后一条 user 消息
-    tool_loop   先调 bash 再以 stop 收尾
-    edit_task   读文件 -> 改文件 -> stop（PRD 成功指标里的任务）
-    reasoning   单轮带 reasoning_content
-    bad_json    返回非法 JSON
-    http_500    返回 500
-    no_answer   返回 finish_reason=stop 但 content 为空
-    unknown_tool  调用不存在的工具
-    two_bash_calls 同一个 {{CMD}} 连续调两次（用来观察 Trace 中途状态）
-    fragmented_tool        一次调用被拆成多元素、靠 index 关联（hy3 等兼容端点）
-    parallel_fragmented    多个并行调用各自被拆成多元素、靠 index 关联
+    simple        单轮，回显最后一条 user 消息（无代码块 → 直接是最终答案）
+    block_loop    先执行一个 echo 代码块，再以无代码块的文本收尾
+    block_final   一轮里执行代码并设置 FINAL，运行当场结束
+    edit_task     读文件 -> 改文件 -> FINAL（PRD 成功指标里的任务）
+    reasoning     单轮带 reasoning_content
+    bad_json      返回非法 JSON
+    http_500      返回 500
+    no_answer     返回 finish_reason=stop 但 content 为空
+    slow_command  一个长时间不退出的代码块（用 {{SLEEP}} 填充命令）
+    two_bash_calls 同一 Trace 内两轮代码块（用 {{SESSION}} 观察中途落盘）
+    always_blocks 永远返回不带 FINAL 的代码块（用来验证 --max-turns 止损）
 """
 
 import argparse
@@ -40,38 +43,28 @@ SCENARIOS = {
     "simple": [
         {"finish_reason": "stop", "content": "__ECHO__"},
     ],
-    "tool_loop": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [
-                {"id": "call_1", "name": "bash", "arguments": {"command": "echo hello-from-tool"}}
-            ],
-        },
+    "block_loop": [
+        {"finish_reason": "stop",
+         "content": "先跑一下。\n```bash\necho hello-from-tool\n```"},
         {"finish_reason": "stop", "content": "final answer"},
     ],
+    "block_final": [
+        {"finish_reason": "stop",
+         "content": "算好了。\n```bash\necho computing\nFINAL=\"final answer\"\n```"},
+    ],
+    # 回复含多个代码块：只执行第一个，其余丢弃并告警
+    "multi_block": [
+        {"finish_reason": "stop",
+         "content": "```bash\necho first\n```\n说明\n```bash\necho second\n```"},
+        {"finish_reason": "stop", "content": "done"},
+    ],
     "edit_task": [
-        {
-            "finish_reason": "tool_calls",
-            "reasoning_content": "先看看文件内容",
-            "tool_calls": [
-                {"id": "call_1", "name": "bash", "arguments": {"command": "{{CAT}} {{FILE}}"}}
-            ],
-        },
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [
-                {
-                    "id": "call_2",
-                    "name": "edit_file",
-                    "arguments": {
-                        "path": "{{FILE}}",
-                        "old_string": "old-text",
-                        "new_string": "new-text",
-                    },
-                }
-            ],
-        },
-        {"finish_reason": "stop", "content": "edited {{FILE}}"},
+        {"finish_reason": "stop", "reasoning_content": "先看看文件内容",
+         "content": "看看文件。\n```bash\n{{CAT}} {{FILE}}\n```"},
+        {"finish_reason": "stop",
+         "content": "改文件。\n```bash\nsed -i 's/old-text/new-text/' {{FILE}}\n```"},
+        {"finish_reason": "stop",
+         "content": "收尾。\n```bash\nFINAL=\"edited {{FILE}}\"\n```"},
     ],
     "reasoning": [
         {
@@ -83,102 +76,21 @@ SCENARIOS = {
     "bad_json": [{"__raw__": "this is not json"}],
     "http_500": [{"__status__": 500, "content": "internal boom"}],
     "no_answer": [{"finish_reason": "stop", "content": ""}],
-    "unknown_tool": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [{"id": "call_1", "name": "no_such_tool", "arguments": {}}],
-        },
-        {"finish_reason": "stop", "content": "recovered from unknown tool"},
-    ],
     "slow_command": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [
-                {"id": "call_1", "name": "bash",
-                 "arguments": {"command": "{{SLEEP}}"}}
-            ],
-        },
+        {"finish_reason": "stop", "content": "```bash\n{{SLEEP}}\n```"},
         {"finish_reason": "stop", "content": "done sleeping"},
     ],
-    # 同一个 bash 命令连续调两次，用来观察同一 Trace 内的中间状态（--replace '{{CMD}}=...'）
+    # 两轮代码块，用 {{SESSION}} 指向当前会话文件，观察 Trace 中途是否已落盘
     "two_bash_calls": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [{"id": "call_1", "name": "bash", "arguments": {"command": "{{CMD}}"}}],
-        },
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [{"id": "call_2", "name": "bash", "arguments": {"command": "{{CMD}}"}}],
-        },
+        {"finish_reason": "stop", "content": "```bash\necho first\n```"},
+        {"finish_reason": "stop", "content": "```bash\ncat \"{{SESSION}}\"\n```"},
         {"finish_reason": "stop", "content": "done"},
     ],
-    "bad_arguments": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [{"id": "call_1", "name": "bash", "arguments": {}}],
-        },
-        {"finish_reason": "stop", "content": "recovered from bad arguments"},
-    ],
-    # 永远返回 tool_calls（脚本用完后重复最后一条），用来验证 --max-turns 止损
-    "always_tools": [
-        {
-            "finish_reason": "tool_calls",
-            "tool_calls": [
-                {"id": "call_loop", "name": "bash",
-                 "arguments": {"command": "echo spin"}}
-            ],
-        },
+    # 永远返回不带 FINAL 的代码块（脚本用完后重复最后一条），用来验证 --max-turns 止损
+    "always_blocks": [
+        {"finish_reason": "stop", "content": "```bash\necho spin\n```"},
     ],
 }
-
-# 兼容端点偶发把一次调用拆成多元素、name/arguments 分散其中、靠 index 关联的形态。
-# 用 __raw__（对象）直接回放：高层脚本会把 arguments 序列化成完整 JSON，无法表达分片。
-_FRAGMENTED_TOOL_TURNS = {
-    "fragmented_tool": [
-        {"__raw__": {
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "index": 0,
-                "message": {
-                    "content": "现调用 list_dir：",
-                    "role": "assistant",
-                    "tool_calls": [
-                        {"id": "call_1", "type": "function", "index": 0,
-                         "function": {"name": "list_dir", "arguments": ""}},
-                        {"index": 0, "function": {"arguments": "{\"path\": \""}},
-                        {"index": 0, "function": {"arguments": "{{DIR}}"}},
-                        {"index": 0, "function": {"arguments": "\"}"}},
-                    ],
-                },
-            }],
-            "model": "hy3",
-        }},
-        {"finish_reason": "stop", "content": "done listing"},
-    ],
-    "parallel_fragmented": [
-        {"__raw__": {
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "index": 0,
-                "message": {
-                    "content": "两个工具并行调用：",
-                    "role": "assistant",
-                    "tool_calls": [
-                        {"id": "call_a", "type": "function", "index": 0,
-                         "function": {"name": "bash", "arguments": "{\"comm"}},
-                        {"id": "call_b", "type": "function", "index": 1,
-                         "function": {"name": "bash", "arguments": "{\"comm"}},
-                        {"index": 0, "function": {"arguments": "and\": \"echo A\"}"}},
-                        {"index": 1, "function": {"arguments": "and\": \"echo B\"}"}},
-                    ],
-                },
-            }],
-            "model": "hy3",
-        }},
-        {"finish_reason": "stop", "content": "done parallel"},
-    ],
-}
-SCENARIOS.update(_FRAGMENTED_TOOL_TURNS)
 
 
 def substitute(obj, mapping):
@@ -207,25 +119,13 @@ def load_script(args):
 
 def as_openai_message(turn, echo_text):
     """把脚本条目转成 OpenAI 的 message 对象。"""
-    msg = {}
+    msg = {"role": "assistant"}
     if "content" in turn:
         msg["content"] = turn["content"].replace("__ECHO__", echo_text)
+    else:
+        msg["content"] = None
     if "reasoning_content" in turn:
         msg["reasoning_content"] = turn["reasoning_content"]
-    if turn.get("tool_calls"):
-        msg["content"] = msg.get("content") or None
-        msg["tool_calls"] = [
-            {
-                "id": call["id"],
-                "type": "function",
-                "function": {
-                    "name": call["name"],
-                    "arguments": json.dumps(call["arguments"], ensure_ascii=False),
-                },
-            }
-            for call in turn["tool_calls"]
-        ]
-    msg["role"] = "assistant"
     return msg
 
 
@@ -301,7 +201,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if "__raw__" in turn:
-            # 原始报文可以是字符串，也可以是对象（写入前再做占位符替换与序列化）。
             raw_body = substitute(turn["__raw__"], self.server.replace)
             if not isinstance(raw_body, str):
                 raw_body = json.dumps(raw_body, ensure_ascii=False)
@@ -351,8 +250,8 @@ def main():
     server.calls = 0
     server.requests = []
     server.verbose = args.verbose
-    # {{CAT}} 默认取当前平台可用的"打印文件"命令，可用 --replace 覆盖
-    server.replace = {"{{CAT}}": "type" if os.name == "nt" else "cat"}
+    # {{CAT}} 打印文件：运行时统一在 bash 里执行，cat 在 Git Bash / POSIX 上都可用
+    server.replace = {"{{CAT}}": "cat"}
     for pair in args.replace:
         key, _, value = pair.partition("=")
         server.replace[key] = value

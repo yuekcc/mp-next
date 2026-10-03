@@ -9,4 +9,4 @@ session_id=`date +%s`
     --model hy3 \
     --api-key sk-1234 \
     --debug \
-    "列出全部内置工具，然后调用 list_dir 看看当前目录有什么"
+    "看看当前目录有什么，然后写一句话总结"

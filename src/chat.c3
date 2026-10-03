@@ -3,21 +3,13 @@ module llmcli::chat;
 import cjson;
 import std::collections::list;
 
-struct ToolCall
-{
-	String id;
-	String name;
-	String arguments; // OpenAI 协议里 arguments 是 JSON 字符串，这里保持原文
-	int index;        // 分片关联键；缺失/非流式形态由解析器记为 -1
-}
-
+// 会话里的一条消息。RLM 循环只有 user / assistant 两种角色：模型的回复是 assistant，
+// 执行输出作为下一条 user 消息回填（shellm 的 shell-output 语义）。
 struct Message
 {
-	String role;         // system / user / assistant / tool
+	String role;      // system / user / assistant
 	String content;
-	String reasoning;    // reasoning_content 原文；空串表示没有
-	ToolCall[] tool_calls;
-	String tool_call_id; // 仅 role=tool
+	String reasoning; // reasoning_content 原文；空串表示没有
 }
 
 struct ChatResponse
@@ -26,7 +18,6 @@ struct ChatResponse
 	String error;
 	String content;
 	String reasoning;
-	ToolCall[] tool_calls;
 	String finish_reason;
 	String usage;
 }
@@ -43,36 +34,7 @@ fn CJsonItem* message_to_json(Message* msg, bool include_reasoning) @private
 {
 	CJsonItem* obj = cjson::create_object();
 	obj.set("role", msg.role);
-
-	if (msg.tool_calls.len)
-	{
-		CJsonItem* calls = cjson::create_array();
-		foreach (call : msg.tool_calls)
-		{
-			CJsonItem* item = cjson::create_object();
-			item.set("id", call.id);
-			item.set("type", "function");
-			CJsonItem* function = cjson::add_object_to_object(item, "function");
-			function.set("name", call.name);
-			function.set("arguments", call.arguments);
-			cjson::add_item_to_array(calls, item);
-		}
-		obj.set_item("tool_calls", calls);
-		if (msg.content.len)
-		{
-			obj.set("content", msg.content);
-		}
-		else
-		{
-			cjson::add_null_to_object(obj, "content");
-		}
-	}
-	else
-	{
-		obj.set("content", msg.content);
-	}
-
-	if (msg.tool_call_id.len) obj.set("tool_call_id", msg.tool_call_id);
+	obj.set("content", msg.content);
 	// reasoning_content 只入会话存档，绝不回传给端点（DeepSeek 等会报错）
 	if (include_reasoning && msg.reasoning.len) obj.set("reasoning_content", msg.reasoning);
 	return obj;
@@ -84,79 +46,7 @@ fn Message message_from_json(Allocator allocator, CJsonItem* obj)
 	msg.role = obj.get_key_string("role", allocator) ?? "";
 	msg.content = obj.get_key_string("content", allocator) ?? "";
 	msg.reasoning = obj.get_key_string("reasoning_content", allocator) ?? "";
-	msg.tool_call_id = obj.get_key_string("tool_call_id", allocator) ?? "";
-
-	msg.tool_calls = tool_calls_from_json(allocator, obj.get_key("tool_calls"));
 	return msg;
-}
-
-// 从 message 对象里取 tool_calls 数组；字段缺失/类型不对都退化成空数组。
-//
-// 兼容分片形态：部分兼容端点（hy3 等）会把一次调用拆成多个元素、name/arguments
-// 分散其中，靠 index 关联（OpenAI 流式增量即此形态，见参考资料 ChatStreamToolCall.index）。
-// 元素带 index 时按 index 归并：arguments 依出现顺序拼接，id/name 取首个非空值；
-// 全部元素都不带 index 时保持逐元素语义（非流式并行调用的正常形态）。
-fn ToolCall[] tool_calls_from_json(Allocator allocator, CJsonItem* calls)
-{
-	if (!calls || !calls.is_array()) return {};
-	usz count = calls.get_len();
-	if (!count) return {};
-
-	List{ToolCall} merged;
-	merged.init(allocator, (sz)count);
-	bool any_index = false;
-	for (usz i = 0; i < count; i++)
-	{
-		CJsonItem* item = calls.get_at((sz)i);
-		if (!item) continue;
-		CJsonItem* function = item.get_key("function");
-		String id = item.get_key_string("id", allocator) ?? "";
-		String name = function ? (function.get_key_string("name", allocator) ?? "") : "";
-		String args = function ? (function.get_key_string("arguments", allocator) ?? "") : "";
-
-		int index = item.get_key_int("index") ?? -1;
-		any_index |= index >= 0;
-
-		// 同一 index 的分片归并到已有槽位；新 index（含非流式的无 index 元素）追加新槽位。
-		sz slot = -1;
-		if (index >= 0)
-		{
-			for (sz j = 0; j < merged.len(); j++)
-			{
-				if (merged.get(j).index == index) { slot = j; break; }
-			}
-		}
-		if (slot < 0)
-		{
-			merged.push({ .index = index });
-			slot = merged.len() - 1;
-		}
-
-		ToolCall* call = merged.get_ref(slot);
-		if (call.id.len == 0) call.id = id;
-		if (call.name.len == 0) call.name = name;
-		call.arguments = call.arguments.concat(allocator, args);
-	}
-
-	if (!any_index)
-	{
-		// 无 index：不归并，逐元素即完整调用。
-		ToolCall[] all = merged.to_array(allocator);
-		merged.free();
-		return all;
-	}
-
-	// 归并后 name 仍为空的幽灵分片（段首缺失）丢弃，不回填、不污染历史。
-	List{ToolCall} kept;
-	kept.init(allocator, merged.len());
-	foreach (call : merged)
-	{
-		if (call.name.len) kept.push(call);
-	}
-	ToolCall[] result = kept.to_array(allocator);
-	kept.free();
-	merged.free();
-	return result;
 }
 
 // ---- 响应解析 -------------------------------------------------------------
@@ -194,8 +84,6 @@ fn ChatResponse parse_response(Allocator allocator, String body)
 	res.content = message.get_key_string("content", allocator) ?? "";
 	res.reasoning = message.get_key_string("reasoning_content", allocator) ?? "";
 	res.finish_reason = choice.get_key_string("finish_reason", allocator) ?? "";
-
-	res.tool_calls = tool_calls_from_json(allocator, message.get_key("tool_calls"));
 
 	CJsonItem* usage = root.get_key("usage");
 	if (usage)
