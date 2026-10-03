@@ -10,7 +10,7 @@
 #   LLMCLI_MODEL     选填，默认 gpt-4o-mini
 #   LLMCLI_CONFIG    选填，会话根目录（默认 ./build/demo）
 
-set -euo pipefail
+set -exo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exe="$script_dir/build/llmcli"
@@ -21,9 +21,10 @@ if [ ! -x "$exe" ]; then
 fi
 
 : "${LLMCLI_API_KEY:?请设置 LLMCLI_API_KEY（例如 export LLMCLI_API_KEY=sk-...）}"
-api_url="${LLMCLI_API_URL:-https://api.openai.com/v1/chat/completions}"
-model="${LLMCLI_MODEL:-gpt-4o-mini}"
+api_url="${LLMCLI_API_URL:-http://localhost:8317/v1/chat/completions}"
+model="${LLMCLI_MODEL:-hy3}"
 config="${LLMCLI_CONFIG:-$script_dir/build/demo}"
+api_key="${LLMCLI_API_KEYL:-sk-1234}"
 
 session_id="demo_$(date +%s)"
 echo "会话 $session_id，模型 $model，会话文件 $config/sessions/$session_id.jsonl" >&2
@@ -34,7 +35,7 @@ echo "会话 $session_id，模型 $model，会话文件 $config/sessions/$sessio
     --config-dir "$config" \
     --api-url "$api_url" \
     --model "$model" \
-    --api-key "$LLMCLI_API_KEY" \
+    --api-key "$api_key" \
     --session-id "$session_id" \
     --debug \
     "统计 $script_dir/src 目录下 .c3 源文件的个数，用 FINAL=\"数量是 N 个\" 给出答案"
