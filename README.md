@@ -35,10 +35,8 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 ## 文档
 
 - [docs/sessions-and-ci.md](docs/sessions-and-ci.md) — 会话存储与 CI 集成
-- [docs/prds/001.md](docs/prds/001.md) — 产品需求文档（v1 基线）
-- [docs/prds/002.md](docs/prds/002.md) — 会话落盘语义修订（`turn`/`ts` 归属、逐 turn 落盘）
-- [docs/prds/003.md](docs/prds/003.md) — 运行配置上下文与工具接口重构（`Options` → `Ctx`）
-- [docs/prds/004.md](docs/prds/004.md) — Agent Loop 重构为 shellm 式 RLM（bash 代码块循环）
+- [docs/prds/001.md](docs/prds/001.md) — 产品需求文档（shellm 式 RLM agent loop 基线）
+- [docs/references/chat-completion-api.md](docs/references/chat-completion-api.md) — 端点协议字段参考资料
 
 ## 注意
 
