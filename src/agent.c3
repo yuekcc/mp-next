@@ -2,12 +2,28 @@ module llmcli::agent;
 
 import std::io, std::time, std::time::clock;
 import std::collections::list;
-import llmcli::chat, llmcli::cli, llmcli::client, llmcli::log, llmcli::rlm,
-	llmcli::runtime, llmcli::session;
+import llmcli::buf, llmcli::chat, llmcli::cli, llmcli::http, llmcli::log, llmcli::runtime,
+	llmcli::session;
 
+// 本模块是 Trace 的全部：主循环、从回复里取代码块、一次 API 往返、逐 turn 落盘。
 // 内存策略：一次 Trace 的消息（含执行输出）在进程生命周期内保留——CLI 跑完即退出，
 // 不做逐轮释放（v1 也不设 turn/长度上限，见 PRD 风险表）；每轮的临时数据走 tmem，
 // 由循环上的 @pool() 回收。
+
+// ---- 常量 ----
+
+// 只用于 stderr 展示（--debug / 错误摘要）的请求/响应预览长度。
+const usz DEBUG_PREVIEW = 4000;
+
+// ---- 类型 ----
+
+// 从模型回复里取出的第一个代码块。code 在 mem 上，由调用方释放。
+struct Extract
+{
+	String code;      // 第一个代码块的内容；没有代码块时为空
+	bool has_code;    // 是否真的找到了代码块（与 code 为空区分：空代码块 has_code=true）
+	bool truncated;   // 第一个代码块之后还有其他代码块（只执行第一个）
+}
 
 // ---- Trace 主循环 ----
 
@@ -58,7 +74,7 @@ fn int run(cli::Ctx* ctx)
 			return cli::EXIT_UNCONVERGED;
 		}
 		Clock mark = clock::now();
-		chat::ChatResponse response = client::chat_once(ctx, messages.to_array(tmem));
+		chat::ChatResponse response = chat_once(ctx, messages.to_array(tmem));
 		if (!response.ok)
 		{
 			log::error("%s", response.error);
@@ -77,7 +93,7 @@ fn int run(cli::Ctx* ctx)
 			return cli::EXIT_UNCONVERGED;
 		}
 
-		rlm::Extract extracted = rlm::extract_code(response.content);
+		Extract extracted = extract_code(response.content);
 
 		// 没有代码块：整个回复就是最终答案（shellm 同款兜底，单轮问答即走这条路）
 		if (!extracted.has_code)
@@ -131,6 +147,117 @@ fn int run(cli::Ctx* ctx)
 			return cli::EXIT_OK;
 		}
 	};
+}
+
+// ---- 代码块提取 ----
+
+// 行级扫描：围栏行开块，之后第一条 trim 后恰为 ``` 的行闭块。
+// 围栏行两种形态：整行以 ``` 开头（含裸 ```），或带 ```bash / ```sh / ```shell 的
+// 标记围栏缀在散文行末（模型偶尔写成"……这样。```bash"）。代码块内以 ``` 开头的行
+// 不当作闭块（避免代码里嵌 markdown 时早闭）。闭块后再出现围栏行只置 truncated，
+// 不再收集——只有第一个块会被执行。
+//
+// 不做 shellm 那套 heredoc 感知与工具标记归一化：v1 只认标准围栏，模型按提示词
+// 把围栏单独放一行即可；过度宽松地"把整段散文当命令跑"反而更危险。
+fn Extract extract_code(String response)
+{
+	Extract out;
+	List{String} body;
+	body.init(tmem);
+
+	bool in_block = false;
+	bool closed = false;
+	String[] lines = response.split(tmem, "\n");
+	foreach (line : lines)
+	{
+		String trimmed = line.trim();
+		String rtrimmed = line.trim_right();
+		bool fence = trimmed.starts_with("```")
+			|| rtrimmed.ends_with("```bash")
+			|| rtrimmed.ends_with("```sh")
+			|| rtrimmed.ends_with("```shell");
+
+		if (closed)
+		{
+			// 闭块之后只要再看到围栏行，就说明还有多余代码块
+			if (fence) out.truncated = true;
+			continue;
+		}
+
+		if (!in_block)
+		{
+			if (fence)
+			{
+				in_block = true;
+				out.has_code = true;
+			}
+			continue;
+		}
+
+		// 块内：精确的闭围栏才收尾；块内其他 ``` 行当代码原样保留
+		if (trimmed == "```")
+		{
+			in_block = false;
+			closed = true;
+			continue;
+		}
+		body.push(line);
+	}
+
+	if (out.has_code)
+	{
+		// 去掉块内尾部的空行，避免脚本末尾多出无意义换行（不影响语义，仅整洁）
+		while (body.len() && body.get(body.len() - 1).trim().len == 0) (void)body.pop();
+		DString joined = dstring::new(tmem);
+		foreach (line : body)
+		{
+			joined.append(line);
+			joined.append("\n");
+		}
+		out.code = joined.str_view().copy(mem);
+	}
+
+	body.free();
+	return out;
+}
+
+// ---- API 往返 ----
+
+// 一次 chat completion 往返：组装请求 → POST → 解析响应。
+// 任一环节失败都在返回的 ChatResponse.error 里给出可读原因（mem 上的堆串）。
+// 密钥由 log 统一脱敏（main 里 add_secret 注册过一次），这里直接打原文即可。
+fn chat::ChatResponse chat_once(cli::Ctx* ctx, chat::Message[] messages)
+{
+	chat::ChatResponse response;
+
+	String request_body = chat::build_request(ctx.model, messages);
+	String[] headers = {
+		"Content-Type: application/json",
+		string::format(tmem, "Authorization: Bearer %s", ctx.api_key),
+	};
+
+	log::debug("POST %s", ctx.api_url);
+	log::debug("headers: Content-Type: application/json, Authorization: Bearer %s", ctx.api_key);
+	log::debug("request: %s", buf::truncate(request_body, DEBUG_PREVIEW));
+
+	http::HttpResponse res = http::http_post_json(ctx.api_url, headers, request_body);
+	if (res.error.len)
+	{
+		response.error = string::format(mem, "网络错误：%s", res.error);
+		return response;
+	}
+	log::debug("response(%d): %s", res.status, buf::truncate(res.body, DEBUG_PREVIEW));
+
+	if (res.status < 200 || res.status >= 300)
+	{
+		response.error = string::format(mem, "HTTP %d：%s", res.status, buf::truncate(res.body, 2000));
+		return response;
+	}
+
+	response = chat::parse_response(mem, res.body);
+	if (!response.ok) response.error = string::format(mem, "%s；原始响应：%s",
+	                                                  response.error, buf::truncate(res.body, 2000));
+	return response;
 }
 
 // ---- 落盘 ----

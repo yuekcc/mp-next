@@ -19,7 +19,7 @@ fn String cstr(Allocator allocator, ZString z)
 
 // 只用于 stderr 展示（--debug / 错误摘要）：仅为可读性截断，不影响落盘与回填。
 // 截断点回退到 UTF-8 字符边界（续字节特征 10xxxxxx），否则半个多字节字符写进 stderr 就是非法 UTF-8。
-// 被 client / runtime 等多处使用，保留在此共享。
+// 被 agent / runtime 等多处使用，保留在此共享。
 fn String truncate(String text, usz limit)
 {
 	if (text.len <= limit) return text;

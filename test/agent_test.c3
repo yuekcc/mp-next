@@ -1,9 +1,9 @@
-module llmcli::test_rlm;
+module llmcli::test_agent;
 
-import llmcli::rlm;
+import llmcli::agent;
 
 // extract_code 的 code 是 mem 上的堆串，测试里统一释放
-fn void release(rlm::Extract* ex) @private
+fn void release(agent::Extract* ex) @private
 {
 	if (ex.code.ptr) free(ex.code.ptr);
 }
@@ -14,7 +14,7 @@ fn void test_extract_first_bash_block() @test
 	@pool()
 	{
 		String response = "让我看看状态。\n```bash\nls -la\necho done\n```\n";
-		rlm::Extract ex = rlm::extract_code(response);
+		agent::Extract ex = agent::extract_code(response);
 		test::eq(ex.has_code, true);
 		test::eq(ex.truncated, false);
 		test::eq(ex.code, "ls -la\necho done\n");
@@ -27,11 +27,11 @@ fn void test_extract_bare_and_sh_fence() @test
 {
 	@pool()
 	{
-		rlm::Extract bare = rlm::extract_code("```\necho hi\n```");
+		agent::Extract bare = agent::extract_code("```\necho hi\n```");
 		test::eq(bare.code, "echo hi\n");
 		release(&bare);
 
-		rlm::Extract sh = rlm::extract_code("```sh\necho hi\n```");
+		agent::Extract sh = agent::extract_code("```sh\necho hi\n```");
 		test::eq(sh.code, "echo hi\n");
 		release(&sh);
 	};
@@ -43,7 +43,7 @@ fn void test_extract_only_first_block_and_flags_truncation() @test
 	@pool()
 	{
 		String response = "```bash\necho one\n```\n说明\n```bash\necho two\n```\n";
-		rlm::Extract ex = rlm::extract_code(response);
+		agent::Extract ex = agent::extract_code(response);
 		test::eq(ex.has_code, true);
 		test::eq(ex.code, "echo one\n");
 		test::eq(ex.truncated, true);
@@ -56,7 +56,7 @@ fn void test_extract_no_block() @test
 {
 	@pool()
 	{
-		rlm::Extract ex = rlm::extract_code("这就是答案，没有代码。");
+		agent::Extract ex = agent::extract_code("这就是答案，没有代码。");
 		test::eq(ex.has_code, false);
 		test::eq(ex.code, "");
 		test::eq(ex.truncated, false);
@@ -68,7 +68,7 @@ fn void test_extract_empty_block() @test
 {
 	@pool()
 	{
-		rlm::Extract ex = rlm::extract_code("```bash\n```");
+		agent::Extract ex = agent::extract_code("```bash\n```");
 		test::eq(ex.has_code, true);
 		test::eq(ex.code, "");
 		release(&ex);
@@ -80,7 +80,7 @@ fn void test_extract_indented_fence_and_trims_trailing_blank() @test
 {
 	@pool()
 	{
-		rlm::Extract ex = rlm::extract_code("  ```bash\n  echo hi\n\n\n  ```");
+		agent::Extract ex = agent::extract_code("  ```bash\n  echo hi\n\n\n  ```");
 		test::eq(ex.has_code, true);
 		test::eq(ex.code, "  echo hi\n");
 		release(&ex);
@@ -92,7 +92,7 @@ fn void test_extract_fence_appended_to_prose() @test
 {
 	@pool()
 	{
-		rlm::Extract ex = rlm::extract_code("先看看。\n这样。```bash\necho hi\n```\n");
+		agent::Extract ex = agent::extract_code("先看看。\n这样。```bash\necho hi\n```\n");
 		test::eq(ex.has_code, true);
 		test::eq(ex.code, "echo hi\n");
 		release(&ex);
