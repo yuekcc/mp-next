@@ -20,6 +20,8 @@ fn int list_sessions()
 
 fn int main(String[] args)
 {
+	// 解析与初始化：先解析，再据开关初始化日志与密钥脱敏，
+	// 然后短路处理 --help / 用法错误 / --list-sessions。
 	cli::ParseResult parsed = cli::resolve(args);
 	session::set_config_dir(parsed.ctx.config_dir);
 	log::init(parsed.ctx.quiet, parsed.ctx.debug, parsed.ctx.no_color);
@@ -39,6 +41,7 @@ fn int main(String[] args)
 	}
 	if (parsed.ctx.list_sessions) return list_sessions();
 
+	// 一次真实运行：装中断处理器、起 libcurl，然后交给 Trace 循环。
 	runtime::install_interrupt_handler();
 
 	http::http_init();

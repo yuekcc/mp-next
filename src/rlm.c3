@@ -2,6 +2,8 @@ module llmcli::rlm;
 
 import std::collections::list;
 
+// ---- 类型 ----
+
 // 从模型回复里取出第一个 ```bash / ```sh / ``` 代码块（shellm 式 RLM 循环的核心）。
 // 取出的代码串在 mem 上，由调用方释放。
 struct Extract
@@ -10,6 +12,8 @@ struct Extract
 	bool has_code;    // 是否真的找到了代码块（与 code 为空区分：空代码块 has_code=true）
 	bool truncated;   // 第一个代码块之后还有其他代码块（只执行第一个）
 }
+
+// ---- 提取 ----
 
 // 行级扫描：围栏行开块，之后第一条 trim 后恰为 ``` 的行闭块。
 // 围栏行两种形态：整行以 ``` 开头（含裸 ```），或带 ```bash / ```sh / ```shell 的

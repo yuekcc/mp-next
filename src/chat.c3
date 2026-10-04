@@ -1,7 +1,9 @@
 module llmcli::chat;
 
 import cjson;
-import std::collections::list;
+import llmcli::buf;
+
+// ---- 类型 ----
 
 // 会话里的一条消息。RLM 循环只有 user / assistant 两种角色：模型的回复是 assistant，
 // 执行输出作为下一条 user 消息回填（shellm 的 shell-output 语义）。
@@ -12,6 +14,7 @@ struct Message
 	String reasoning; // reasoning_content 原文；空串表示没有
 }
 
+// 一次 chat completions 响应的解析结果。content/reasoning/usage 归 allocator 所有。
 struct ChatResponse
 {
 	bool ok;
@@ -22,7 +25,7 @@ struct ChatResponse
 	String usage;
 }
 
-// ---- 序列化 ---------------------------------------------------------------
+// ---- 消息序列化 ----
 
 // 回传给端点的形态：reasoning_content 槽位为空（DeepSeek 等端点收到会报错）
 fn CJsonItem* message_to_request_json(Message* msg) => message_to_json(msg, false);
@@ -49,7 +52,34 @@ fn Message message_from_json(Allocator allocator, CJsonItem* obj)
 	return msg;
 }
 
-// ---- 响应解析 -------------------------------------------------------------
+// ---- 请求组装 ----
+
+// 组装一次 chat completions 请求体（tmem，属本轮 scratch）。
+// RLM 循环不用 tools 协议：模型写 ```bash 代码块，执行输出作为下一条 user 消息回填。
+// reasoning_content 只入会话存档，绝不回传给端点（message_to_request_json 已剥离）。
+fn String build_request(String model, Message[] messages)
+{
+	CJsonItem* root = cjson::create_object();
+	defer root.free();
+
+	root.set("model", model);
+	CJsonItem* array = cjson::create_array();
+	foreach (message : messages)
+	{
+		cjson::add_item_to_array(array, message_to_request_json(&message));
+	}
+	root.set_item("messages", array);
+	// 用 add_false_to_object 而不是 set("stream", false)：cJSON 的 cJSON_bool 是 int，
+	// 与 C3 的 bool 宽度不同，走 C 变参/值传递会得到 true。
+	cjson::add_false_to_object(root, "stream");
+
+	ZString printed = cjson::print_unformatted(root);
+	String body = buf::cstr(tmem, printed);
+	cjson::free(printed);
+	return body;
+}
+
+// ---- 响应解析 ----
 
 fn ChatResponse parse_response(Allocator allocator, String body)
 {

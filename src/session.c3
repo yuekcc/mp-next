@@ -5,6 +5,8 @@ import std::collections::list;
 import cjson;
 import llmcli::buf, llmcli::chat, llmcli::log;
 
+// ---- 常量与配置 ----
+
 const String SUFFIX = ".jsonl";
 
 // --config-dir 指定的配置目录，也就是会话根目录；空串 = 用默认 ~/.llmcli。
@@ -15,6 +17,32 @@ fn void set_config_dir(String dir)
 {
 	config_dir = dir;
 }
+
+// ---- 类型 ----
+
+struct Session
+{
+	String id;
+	String path;
+}
+
+// 会话文件的一行：一条消息 + 它所属的 turn + 它发生的时刻。
+// user 消息是触发本次 Trace 的输入，属 turn 1；assistant 与执行输出属产生它的那一轮请求。
+struct Record
+{
+	chat::Message message;
+	usz turn;
+	String ts;   // 消息发生的时刻（timestamp() 的产物），不是落盘那一刻
+}
+
+struct SessionSummary
+{
+	String id;
+	String updated;
+	usz count;
+}
+
+// ---- 路径 ----
 
 // 会话根目录：--config-dir 优先，未指定则 ~/.llmcli（Windows 为 %USERPROFILE%\.llmcli）。
 // 不读环境变量：存放位置只由命令行决定。
@@ -40,28 +68,6 @@ fn bool valid_id(String id)
 	return true;
 }
 
-struct Session
-{
-	String id;
-	String path;
-}
-
-// 会话文件的一行：一条消息 + 它所属的 turn + 它发生的时刻。
-// user 消息是触发本次 Trace 的输入，属 turn 1；assistant/tool 属产生它的那一轮请求。
-struct Record
-{
-	Message message;
-	usz turn;
-	String ts;   // 消息发生的时刻（timestamp() 的产物），不是落盘那一刻
-}
-
-// 消息发生的时刻，格式就是记录里的 ts（本地时区 RFC3339，秒级）。
-// 在消息产生时取一次写进 Record，落盘时原样写入。
-fn String timestamp(Allocator allocator)
-{
-	return datetime::now().to_local().format(allocator, DateTimeFormat.RFC3339Z);
-}
-
 fn Session open(String id)
 {
 	Session session;
@@ -71,41 +77,7 @@ fn Session open(String id)
 	return session;
 }
 
-// 读历史；坏行跳过并告警，不中断本次运行。
-fn Message[] load(Allocator allocator, Session* session)
-{
-	List{Message} list;
-	list.init(allocator);
-
-	char[]? data = file::load(allocator, session.path);
-	if (catch err = data) return list.to_array(allocator); // 没有历史文件是正常的
-
-	String[] lines = ((String)data).split(tmem, "\n", 0, true);
-	usz broken = 0;
-	foreach (line : lines)
-	{
-		CJsonItem* root = cjson::parse_with_length((ZString)line.ptr, line.len);
-		if (!root)
-		{
-			broken++;
-			continue;
-		}
-		CJsonItem* message = root.get_key("message");
-		if (!message)
-		{
-			broken++;
-			root.free();
-			continue;
-		}
-		list.push(chat::message_from_json(allocator, message));
-		root.free();
-	}
-	if (broken) log::warn("会话 %s 有 %d 行无法解析，已跳过", session.id, broken);
-
-	Message[] messages = list.to_array(allocator);
-	list.free();
-	return messages;
-}
+// ---- 落盘与读回 ----
 
 // 追加一批记录：调用方按 turn 攒齐后调用，一次 write 写完一整轮。
 // 整块一次 write，既避免并发写下多行交错，也不会留下半截 turn（assistant 的决策
@@ -152,18 +124,50 @@ fn void append(Session* session, Record[] records)
 	(void)file.flush();
 }
 
-// 会话文件一行一条记录；解析失败返回 null（调用方决定跳过还是告警）。
-fn CJsonItem* parse_record(String line) @private
+// 读历史；坏行跳过并告警，不中断本次运行。
+fn chat::Message[] load(Allocator allocator, Session* session)
 {
-	return cjson::parse_with_length((ZString)line.ptr, line.len);
+	List{chat::Message} list;
+	list.init(allocator);
+
+	char[]? data = file::load(allocator, session.path);
+	if (catch err = data) return list.to_array(allocator); // 没有历史文件是正常的
+
+	String[] lines = ((String)data).split(tmem, "\n", 0, true);
+	usz broken = 0;
+	foreach (line : lines)
+	{
+		CJsonItem* root = cjson::parse_with_length((ZString)line.ptr, line.len);
+		if (!root)
+		{
+			broken++;
+			continue;
+		}
+		CJsonItem* message = root.get_key("message");
+		if (!message)
+		{
+			broken++;
+			root.free();
+			continue;
+		}
+		list.push(chat::message_from_json(allocator, message));
+		root.free();
+	}
+	if (broken) log::warn("会话 %s 有 %d 行无法解析，已跳过", session.id, broken);
+
+	chat::Message[] messages = list.to_array(allocator);
+	list.free();
+	return messages;
 }
 
-struct SessionSummary
+// 消息发生的时刻，格式就是记录里的 ts（本地时区 RFC3339，秒级）。
+// 在消息产生时取一次写进 Record，落盘时原样写入。
+fn String timestamp(Allocator allocator)
 {
-	String id;
-	String updated;
-	usz count;
+	return datetime::now().to_local().format(allocator, DateTimeFormat.RFC3339Z);
 }
+
+// ---- 列出会话 ----
 
 fn SessionSummary[] list_all(Allocator allocator)
 {

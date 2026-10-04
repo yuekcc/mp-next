@@ -5,6 +5,8 @@ import std::core::mem::allocators;
 import curl;
 import llmcli::buf;
 
+// ---- 类型 ----
+
 // 一次非流式 HTTP POST 的结果。body/error 归 mem 所有，由调用方决定何时释放。
 struct HttpResponse
 {
@@ -13,15 +15,7 @@ struct HttpResponse
 	String error;   // 传输层错误（curl result string），成功时为空
 }
 
-// sink 绑定 LIBC_ALLOCATOR（脱离 @pool/context），增长发生在 libcurl 的 C 回调里也安全。
-// ponytail: append_bytes OOM 时直接 abort，而不再走原来的"短写让 curl 报 WRITE_ERROR"优雅路径；
-// CLI 读取 MB 级响应体，OOM 不可达，v1 不做降级。
-fn usz http_write_cb(char* buffer, usz size, usz nitems, void* outstream)
-{
-	usz total = size * nitems;
-	((DString*)outstream).append_bytes(buffer[:total]);
-	return total;
-}
+// ---- 生命周期 ----
 
 fn void http_init()
 {
@@ -31,6 +25,18 @@ fn void http_init()
 fn void http_deinit()
 {
 	curl::global_cleanup();
+}
+
+// ---- 请求 ----
+
+// sink 绑定 LIBC_ALLOCATOR（脱离 @pool/context），增长发生在 libcurl 的 C 回调里也安全。
+// ponytail: append_bytes OOM 时直接 abort，而不再走原来的"短写让 curl 报 WRITE_ERROR"优雅路径；
+// CLI 读取 MB 级响应体，OOM 不可达，v1 不做降级。
+fn usz http_write_cb(char* buffer, usz size, usz nitems, void* outstream)
+{
+	usz total = size * nitems;
+	((DString*)outstream).append_bytes(buffer[:total]);
+	return total;
 }
 
 fn HttpResponse http_post_json(String url, String[] headers, String body)

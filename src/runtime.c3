@@ -4,6 +4,14 @@ import std::io, std::io::path, std::os::env, std::os::process, std::thread, std:
 import std::core::mem::allocators;
 import llmcli::log;
 
+// ---- 常量 ----
+
+// 输出合并后截断到末 2000 行（沿用原 Bash 工具的额度）；截断前的完整输出落盘到临时文件，
+// 便于模型在需要时读取完整结果。
+const usz BASH_LINE_LIMIT = 2000;
+
+// ---- 中断处理 ----
+
 // 当前运行中的子进程，供中断处理器终止，避免留下孤儿进程。
 // 不能是 tlocal：Windows 上信号处理器跑在另一个线程。
 Process* active_child;
@@ -30,12 +38,25 @@ fn void install_interrupt_handler()
 	$endif
 }
 
+// ---- 类型 ----
+
 struct StreamReader
 {
 	Process* process;
 	DString* out;
 	bool want_stderr;
 }
+
+// 一次生成代码执行的结果。output 与 final_answer 都是 mem 上的堆串，由调用方释放。
+struct Execution
+{
+	String output;       // 回填给模型的执行输出（stdout+stderr，必要时截断）
+	int exit_code;
+	bool has_final;      // 生成代码里设了 FINAL / FINAL_FILE
+	String final_answer; // has_final 时的最终答案
+}
+
+// ---- 进程 I/O ----
 
 fn int read_stream_worker(void* arg)
 {
@@ -52,9 +73,7 @@ fn int read_stream_worker(void* arg)
 	return 0;
 }
 
-// 输出合并后截断到末 2000 行（沿用原 Bash 工具的额度）；截断前的完整输出落盘到临时文件，
-// 便于模型在需要时读取完整结果。
-const usz BASH_LINE_LIMIT = 2000;
+// ---- 执行一段生成代码 ----
 
 // 定位 bash：各平台统一用 bash 执行。Git for Windows 默认只把 Git\cmd 加进 PATH（不含 bash.exe），
 // 所以 Windows 先按常见安装位置探测，找不到再退回 PATH 里的 bash。
@@ -82,15 +101,6 @@ fn String find_bash()
 		}
 	$endif
 	return "bash";
-}
-
-// 一次生成代码执行的结果。output 与 final_answer 都是 mem 上的堆串，由调用方释放。
-struct Execution
-{
-	String output;       // 回填给模型的执行输出（stdout+stderr，必要时截断）
-	int exit_code;
-	bool has_final;      // 生成代码里设了 FINAL / FINAL_FILE
-	String final_answer; // has_final 时的最终答案
 }
 
 // FINAL / FINAL_FILE 落盘的临时文件路径（每次执行一个，跑完即删）。

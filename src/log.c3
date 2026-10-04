@@ -2,14 +2,22 @@ module llmcli::log;
 
 import std::io;
 
-// v1 没有 logger 模块，所有过程信息在这里集中打印到 stderr。
-// 后续要换 logger 时只改这一处（PRD「可观测性」）。
+// ---- 常量 ----
+
 const String C_RESET = "\e[0m";
 const String C_DIM = "\e[2m";
 const String C_RED = "\e[31m";
 const String C_YELLOW = "\e[33m";
 const String C_CYAN = "\e[36m";
 
+// 已注册的敏感串：注册一次，所有日志输出前自动脱敏，不再依赖调用方记得调 redact。
+// ponytail: 固定 8 槽（一个 CLI 进程只注册 api_key），满了静默忽略。
+const usz MAX_SECRETS = 8;
+
+// ---- 状态 ----
+
+// v1 没有 logger 模块，所有过程信息在这里集中打印到 stderr。
+// 后续要换 logger 时只改这一处（PRD「可观测性」）。
 struct Logger
 {
 	bool quiet;
@@ -18,18 +26,10 @@ struct Logger
 }
 
 Logger logger;
-
-// 已注册的敏感串：注册一次，所有日志输出前自动脱敏，不再依赖调用方记得调 redact。
-// ponytail: 固定 8 槽（一个 CLI 进程只注册 api_key），满了静默忽略。
-const usz MAX_SECRETS = 8;
 String[MAX_SECRETS] secrets;
 usz secret_count;
 
-fn void add_secret(String secret)
-{
-	if (!secret.len || secret_count >= MAX_SECRETS) return;
-	secrets[secret_count++] = secret;
-}
+// ---- 开关 ----
 
 fn void init(bool quiet, bool debug, bool no_color)
 {
@@ -37,6 +37,12 @@ fn void init(bool quiet, bool debug, bool no_color)
 	logger.debug = debug;
 	// 只有 stderr 是终端才上色：重定向到文件/管道时不能出现 ANSI 转义。
 	logger.color = !no_color && io::stderr().isatty();
+}
+
+fn void add_secret(String secret)
+{
+	if (!secret.len || secret_count >= MAX_SECRETS) return;
+	secrets[secret_count++] = secret;
 }
 
 // 密钥脱敏：形如 sk-1234 -> sk-***234。短于 6 位直接全遮。
@@ -62,7 +68,7 @@ fn String fmt_redacted(String format, args...) @private
 	return redact(string::tformat(format, ...args));
 }
 
-fn void tag(String name, String color)
+fn void tag(String name, String color) @private
 {
 	if (logger.color)
 	{
@@ -73,6 +79,8 @@ fn void tag(String name, String color)
 		io::eprintf("%s ", name);
 	}
 }
+
+// ---- 分级输出 ----
 
 fn void error(String format, args...)
 {

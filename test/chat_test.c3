@@ -2,7 +2,7 @@ module llmcli::test_chat;
 
 import std::io;
 import cjson;
-import llmcli::buf, llmcli::chat, llmcli::cli, llmcli::agent;
+import llmcli::buf, llmcli::chat, llmcli::cli;
 
 fn void test_parse_stop_with_content() @test
 {
@@ -63,7 +63,7 @@ fn void test_request_strips_reasoning_content() @test
 		};
 		Message[] messages = { assistant };
 
-		String body = agent::build_request(&ctx, messages);
+		String body = chat::build_request(ctx.model, messages);
 		test::@check(!body.contains("reasoning_content"),
 		             "请求体不能带 reasoning_content，实际：%s", body);
 		test::@check(body.contains(`"stream":false`), "stream 必须是 false，实际：%s", body);
