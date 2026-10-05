@@ -1,6 +1,6 @@
 # llmcli
 
-把 LLM 接进 shell 流水线的单二进制 CLI：OpenAI chat completions 兼容，内置 shellm 式 RLM agent loop（模型写 bash 代码、本地执行、输出回填，直到代码设置 `FINAL` / `FINAL_FILE`），stdout 只输出最终答案，过程日志全部走 stderr。
+把 LLM 接进 shell 流水线的单二进制 CLI：OpenAI chat completions 兼容，内置 shellm 式 RLM agent loop（模型写 Python 代码、本地执行、输出回填，直到代码设置 `FINAL` / `FINAL_FILE`），stdout 只输出最终答案，过程日志全部走 stderr。
 
 ## 构建
 
@@ -19,7 +19,7 @@ llmcli --model gpt-4o-mini --api-key $KEY "用一句话解释什么是快排"
 # 管道输入
 cat x.md | llmcli --model gpt-4o-mini --api-key $KEY
 
-# shellm 式 RLM：模型写 ```bash 代码块，本地执行后把输出回填，直到 FINAL / FINAL_FILE
+# shellm 式 RLM：模型写 ```python 代码块，本地执行后把输出回填，直到 FINAL / FINAL_FILE
 llmcli --model gpt-4o-mini --api-key $KEY --session-id work "把 src/cli.c3 里的拼写错误修掉"
 ```
 
@@ -40,6 +40,6 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 
 ## 注意
 
-模型生成的 bash 代码默认放行任意命令，提示注入或模型误判可导致任意代码执行（每轮执行的代码原文会打印到 stderr 供审计）。默认不设 turn 上限与超时，失控时用 Ctrl+C 中断或加 `--max-turns <n>`。
+模型生成的 Python 代码默认放行任意命令（含 subprocess），提示注入或模型误判可导致任意代码执行（每轮执行的代码原文会打印到 stderr 供审计）。默认不设 turn 上限与超时，失控时用 Ctrl+C 中断或加 `--max-turns <n>`。
 
-代码在所有平台都经 `bash -e -c` 执行。Windows 上要求安装 Git for Windows（自动探测常见安装位置，找不到时回退到 PATH 里的 `bash`）。
+代码在所有平台都经 Python 3 执行（`-X utf8`，输出与文件默认编码统一 UTF-8）。Windows 上优先用 py 启动器（`%WINDIR%\py.exe`），找不到时回退到 PATH 里的 `python`；Linux/macOS 用 `python3`。

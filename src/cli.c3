@@ -308,8 +308,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 
 用法：llmcli --model <id> --api-key <key> [flags] [<prompt>]
 
-一次运行即一条 Trace：模型回复一个 ` +++ "```bash" +++ ` 代码块，本地以 bash 执行，
-输出作为下一条 user 消息回填，循环直到代码里设置 FINAL / FINAL_FILE——bash 是唯一的工具。
+一次运行即一条 Trace：模型回复一个 ` +++ "```python" +++ ` 代码块，本地以 Python 执行，
+输出作为下一条 user 消息回填，循环直到代码里设置 FINAL / FINAL_FILE——Python 是唯一的工具。
 
 输入（三选一，不能同时给）：
   <prompt>                 位置参数，直接写在命令行上
@@ -361,10 +361,10 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
   请自行删除对应文件。落盘内容可能含敏感信息，注意存放位置。
 
 风险提示：
-  模型生成的 bash 代码默认放行任意命令，提示注入或模型误判可导致任意代码执行。
-  每轮执行的代码原文都会打印到 stderr 供审计。默认不设 turn 上限、不设超时、
-  不截断工具输出；不设 --max-turns 时失控请用 Ctrl+C 中断，CI 中请用外部超时
-  （如 timeout 60 llmcli ... 或 job timeout）包裹。
+  模型生成的 Python 代码默认放行任意命令（含 subprocess），提示注入或模型误判可导致
+  任意代码执行。每轮执行的代码原文都会打印到 stderr 供审计。默认不设 turn 上限、
+  不设超时、不截断工具输出；不设 --max-turns 时失控请用 Ctrl+C 中断，CI 中请用外部
+  超时（如 timeout 60 llmcli ... 或 job timeout）包裹。
 
 CI/脚本集成：
   无需任何交互输入；stdout 只包含最终答案，可直接重定向或交给 jq。

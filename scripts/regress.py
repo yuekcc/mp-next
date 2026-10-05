@@ -109,7 +109,7 @@ def check(name, condition, detail=""):
 
 
 def fwd(path):
-    """把 Windows 路径转成正斜杠，便于嵌进 bash 命令。"""
+    """把 Windows 路径转成正斜杠，便于嵌进 Python 单引号字符串。"""
     return path.replace("\\", "/")
 
 
@@ -220,6 +220,40 @@ def s2_block_final(mock):
         check("S2 FINAL：退出码 0", proc.returncode == 0, proc.stderr)
         check("S2 FINAL：stdout 为 FINAL 的值", proc.stdout.strip() == "final answer", repr(proc.stdout))
         check("S2 FINAL：一次请求即收尾", len(server.requests()) == 1, str(len(server.requests())))
+    finally:
+        server.stop()
+
+
+def s2_final_empty():
+    """AC: FINAL 设为空串也算"设置过"，当场以空答案收尾（与 bash 版 set-ness 一致）。"""
+    server = Mock("block_final_empty", port=PORT + 26)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="说点什么")
+        check("S2 FINAL 空串：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 FINAL 空串：stdout 为空", proc.stdout.strip() == "", repr(proc.stdout))
+        check("S2 FINAL 空串：一次请求即收尾（未被当未设 FINAL）",
+              len(server.requests()) == 1, str(len(server.requests())))
+    finally:
+        server.stop()
+
+
+def s2_final_file(run_index):
+    """AC: 代码设 FINAL_FILE 时其文件内容进 stdout。"""
+    work = os.path.join(WORK, "work")
+    os.makedirs(work, exist_ok=True)
+    src = os.path.join(work, "final_src_%d.txt" % run_index)
+    server = Mock("block_final_file", replace={"{{FINALSRC}}": fwd(src)}, port=PORT + 27)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="从文件给答案")
+        check("S2 FINAL_FILE：退出码 0", proc.returncode == 0, proc.stderr)
+        check("S2 FINAL_FILE：stdout 为文件内容",
+              proc.stdout.strip() == "从文件来的答案", repr(proc.stdout))
+        check("S2 FINAL_FILE：一次请求即收尾",
+              len(server.requests()) == 1, str(len(server.requests())))
     finally:
         server.stop()
 
@@ -396,7 +430,7 @@ def s3_persist_mid_trace():
     home = os.path.join(WORK, "midtrace_home")
     shutil.rmtree(home, ignore_errors=True)
     session_file = os.path.join(home, "sessions", "midtrace.jsonl")
-    server = Mock("two_bash_calls", replace={"{{SESSION}}": fwd(session_file)}, port=PORT + 13)
+    server = Mock("two_code_calls", replace={"{{SESSION}}": fwd(session_file)}, port=PORT + 13)
     try:
         server.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
@@ -614,6 +648,8 @@ def main():
         s1_single_turn(simple_mock, args.verbose)
         s2_block_loop(mock)
         s2_block_final(mock)
+        s2_final_empty()
+        s2_final_file(1)
         s2_multi_block()
         s2_error_paths()
         s3_sessions(mock, args.verbose)

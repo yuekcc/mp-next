@@ -66,7 +66,7 @@ Remove-Item "$env:USERPROFILE\.llmcli\sessions\work.jsonl"
 - 会话文件包含完整对话、思维链与代码执行输出，**可能含敏感数据**；注意存放位置与磁盘权限。
 - `--quiet` 只影响 stderr 打印，**不改变落盘**。
 - API key 不落盘，stderr 上出现时一律脱敏（`sk-***abc`）。
-- 模型生成的 bash 代码默认放行任意命令：提示注入或模型误判会导致任意代码执行。每轮代码原文都会
+- 模型生成的 Python 代码默认放行任意命令：提示注入或模型误判会导致任意代码执行。每轮代码原文都会
   打印到 stderr 供审计，`--help` 里也有警示。
 - 默认不设 turn 上限、不设 HTTP/命令超时、不截断代码输出。需要止损就加 `--max-turns <n>`
   （n>0 生效，达到上限时 stderr 说明原因、stdout 为空、退出码 3）；不设时用 Ctrl+C 中断——

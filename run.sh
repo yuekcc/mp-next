@@ -1,8 +1,8 @@
 #!/bin/bash
 # llmcli 实际用法示例：用 shellm 式 RLM 循环完成一个真实任务。
 #
-# 模型会写 ```bash 代码块，llmcli 执行后把输出回填，循环直到代码里设置
-# FINAL / FINAL_FILE 才收尾——bash 就是它唯一的工具。
+# 模型会写 ```python 代码块，llmcli 执行后把输出回填，循环直到代码里设置
+# FINAL / FINAL_FILE 才收尾——Python 就是它唯一的工具。
 #
 # 配置走环境变量，均可覆盖：
 #   LLMCLI_API_KEY   必填，端点密钥

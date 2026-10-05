@@ -28,7 +28,7 @@ struct Extract
 // ---- Trace 主循环 ----
 
 // 一次运行（一个 Trace）：上下文从 ctx 进，turn/messages/pending/store 都只活在这个函数里。
-// 循环：请求 → 取 ```bash 代码块 → 本地执行 → 输出作为下一条 user 回填，直到代码设了
+// 循环：请求 → 取 ```python 代码块 → 本地执行 → 输出作为下一条 user 回填，直到代码设了
 // FINAL / FINAL_FILE（或回复里没有代码块，则整段回复即答案）。
 fn int run(cli::Ctx* ctx)
 {
@@ -124,7 +124,7 @@ fn int run(cli::Ctx* ctx)
 		pending.push({ .message = assistant, .turn = turn, .ts = session::timestamp(mem) });
 
 		Clock exec_mark = clock::now();
-		runtime::Execution exec = runtime::run_bash(extracted.code);
+		runtime::Execution exec = runtime::run_python(extracted.code);
 		log::info("[turn %d] 执行 -> exit %d, %dms", turn, exec.exit_code, elapsed_ms(&exec_mark));
 
 		// 执行输出作为下一条 user 消息回填（shellm 的 shell-output 语义）
@@ -152,10 +152,9 @@ fn int run(cli::Ctx* ctx)
 // ---- 代码块提取 ----
 
 // 行级扫描：围栏行开块，之后第一条 trim 后恰为 ``` 的行闭块。
-// 围栏行两种形态：整行以 ``` 开头（含裸 ```），或带 ```bash / ```sh / ```shell 的
-// 标记围栏缀在散文行末（模型偶尔写成"……这样。```bash"）。代码块内以 ``` 开头的行
-// 不当作闭块（避免代码里嵌 markdown 时早闭）。闭块后再出现围栏行只置 truncated，
-// 不再收集——只有第一个块会被执行。
+// 围栏行两种形态：整行以 ``` 开头（含裸 ```），或带 ```python 的标记围栏缀在散文行末
+// （模型偶尔写成"……这样。```python"）。代码块内以 ``` 开头的行不当作闭块（避免代码里
+// 嵌 markdown 时早闭）。闭块后再出现围栏行只置 truncated，不再收集——只有第一个块会被执行。
 //
 // 不做 shellm 那套 heredoc 感知与工具标记归一化：v1 只认标准围栏，模型按提示词
 // 把围栏单独放一行即可；过度宽松地"把整段散文当命令跑"反而更危险。
@@ -173,9 +172,7 @@ fn Extract extract_code(String response)
 		String trimmed = line.trim();
 		String rtrimmed = line.trim_right();
 		bool fence = trimmed.starts_with("```")
-			|| rtrimmed.ends_with("```bash")
-			|| rtrimmed.ends_with("```sh")
-			|| rtrimmed.ends_with("```shell");
+			|| rtrimmed.ends_with("```python");
 
 		if (closed)
 		{

@@ -4,7 +4,7 @@
 只实现 POST /v1/chat/completions（非流式）与 GET /health。
 响应按"脚本"依次返回：第 N 次请求返回脚本第 N 条，脚本用完后重复最后一条。
 
-llmcli 是 shellm 式 RLM 循环：模型回复一个 ```bash 代码块，本地执行后把输出作为
+llmcli 是 shellm 式 RLM 循环：模型回复一个 ```python 代码块，本地执行后把输出作为
 下一条 user 消息回填，直到代码里设置 FINAL / FINAL_FILE；没有代码块的回复即最终答案。
 所以脚本条目就是"每一轮模型的回复文本"。
 
@@ -14,22 +14,22 @@ llmcli 是 shellm 式 RLM 循环：模型回复一个 ```bash 代码块，本地
 
 脚本格式（JSON 数组），每条是 choices[0].message 的补丁：
     [
-      {"finish_reason": "stop", "content": "```bash\\necho hi\\n```"},
+      {"finish_reason": "stop", "content": "```python\\nprint(\"hi\")\\n```"},
       {"finish_reason": "stop", "content": "done", "reasoning_content": "思考中"}
     ]
 content 里的 {{PLACEHOLDER}} 可用 --replace k=v 替换。
 
 内置 scenario：
     simple        单轮，回显最后一条 user 消息（无代码块 → 直接是最终答案）
-    block_loop    先执行一个 echo 代码块，再以无代码块的文本收尾
+    block_loop    先执行一个 print 代码块，再以无代码块的文本收尾
     block_final   一轮里执行代码并设置 FINAL，运行当场结束
     edit_task     读文件 -> 改文件 -> FINAL（PRD 成功指标里的任务）
     reasoning     单轮带 reasoning_content
     bad_json      返回非法 JSON
     http_500      返回 500
     no_answer     返回 finish_reason=stop 但 content 为空
-    slow_command  一个长时间不退出的代码块（用 {{SLEEP}} 填充命令）
-    two_bash_calls 同一 Trace 内两轮代码块（用 {{SESSION}} 观察中途落盘）
+    slow_command  一个长时间不退出的代码块（用 {{SLEEP}} 填充 subprocess 命令）
+    two_code_calls 同一 Trace 内两轮代码块（用 {{SESSION}} 观察中途落盘）
     always_blocks 永远返回不带 FINAL 的代码块（用来验证 --max-turns 止损）
 """
 
@@ -45,26 +45,38 @@ SCENARIOS = {
     ],
     "block_loop": [
         {"finish_reason": "stop",
-         "content": "先跑一下。\n```bash\necho hello-from-tool\n```"},
+         "content": "先跑一下。\n```python\nprint(\"hello-from-tool\")\n```"},
         {"finish_reason": "stop", "content": "final answer"},
     ],
     "block_final": [
         {"finish_reason": "stop",
-         "content": "算好了。\n```bash\necho computing\nFINAL=\"final answer\"\n```"},
+         "content": "算好了。\n```python\nprint(\"computing\")\nFINAL = \"final answer\"\n```"},
+    ],
+    # FINAL 设为空串也算"设置过"（与 bash 版 [ -n "${FINAL+x}" ] 一致），当场以空答案收尾；
+    # 若按真假值判断会误当未设，多跑一轮。
+    "block_final_empty": [
+        {"finish_reason": "stop",
+         "content": "无甚可说。\n```python\nFINAL = \"\"\n```"},
+        {"finish_reason": "stop", "content": "这个不该出现"},
+    ],
+    # FINAL_FILE：代码写出文件并以此为最终答案，内容按字节取回
+    "block_final_file": [
+        {"finish_reason": "stop",
+         "content": "写好了。\n```python\nopen(r'{{FINALSRC}}', 'w', encoding='utf-8').write('从文件来的答案')\nFINAL_FILE = r'{{FINALSRC}}'\n```"},
     ],
     # 回复含多个代码块：只执行第一个，其余丢弃并告警
     "multi_block": [
         {"finish_reason": "stop",
-         "content": "```bash\necho first\n```\n说明\n```bash\necho second\n```"},
+         "content": "```python\nprint(\"first\")\n```\n说明\n```python\nprint(\"second\")\n```"},
         {"finish_reason": "stop", "content": "done"},
     ],
     "edit_task": [
         {"finish_reason": "stop", "reasoning_content": "先看看文件内容",
-         "content": "看看文件。\n```bash\n{{CAT}} {{FILE}}\n```"},
+         "content": "看看文件。\n```python\nprint(open(r'{{FILE}}', encoding=\"utf-8\").read())\n```"},
         {"finish_reason": "stop",
-         "content": "改文件。\n```bash\nsed -i 's/old-text/new-text/' {{FILE}}\n```"},
+         "content": "改文件。\n```python\np = r'{{FILE}}'\ns = open(p, encoding=\"utf-8\").read()\nopen(p, \"w\", encoding=\"utf-8\").write(s.replace(\"old-text\", \"new-text\"))\n```"},
         {"finish_reason": "stop",
-         "content": "收尾。\n```bash\nFINAL=\"edited {{FILE}}\"\n```"},
+         "content": "收尾。\n```python\nFINAL = \"edited {{FILE}}\"\n```"},
     ],
     "reasoning": [
         {
@@ -77,18 +89,19 @@ SCENARIOS = {
     "http_500": [{"__status__": 500, "content": "internal boom"}],
     "no_answer": [{"finish_reason": "stop", "content": ""}],
     "slow_command": [
-        {"finish_reason": "stop", "content": "```bash\n{{SLEEP}}\n```"},
+        {"finish_reason": "stop",
+         "content": "```python\nimport subprocess\nsubprocess.run(r'{{SLEEP}}'.split())\n```"},
         {"finish_reason": "stop", "content": "done sleeping"},
     ],
     # 两轮代码块，用 {{SESSION}} 指向当前会话文件，观察 Trace 中途是否已落盘
-    "two_bash_calls": [
-        {"finish_reason": "stop", "content": "```bash\necho first\n```"},
-        {"finish_reason": "stop", "content": "```bash\ncat \"{{SESSION}}\"\n```"},
+    "two_code_calls": [
+        {"finish_reason": "stop", "content": "```python\nprint(\"first\")\n```"},
+        {"finish_reason": "stop", "content": "```python\nprint(open(r'{{SESSION}}', encoding=\"utf-8\").read())\n```"},
         {"finish_reason": "stop", "content": "done"},
     ],
     # 永远返回不带 FINAL 的代码块（脚本用完后重复最后一条），用来验证 --max-turns 止损
     "always_blocks": [
-        {"finish_reason": "stop", "content": "```bash\necho spin\n```"},
+        {"finish_reason": "stop", "content": "```python\nprint(\"spin\")\n```"},
     ],
 }
 
@@ -250,8 +263,7 @@ def main():
     server.calls = 0
     server.requests = []
     server.verbose = args.verbose
-    # {{CAT}} 打印文件：运行时统一在 bash 里执行，cat 在 Git Bash / POSIX 上都可用
-    server.replace = {"{{CAT}}": "cat"}
+    server.replace = {}
     for pair in args.replace:
         key, _, value = pair.partition("=")
         server.replace[key] = value
