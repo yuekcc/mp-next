@@ -76,6 +76,8 @@ fn ParseResult parse(String[] args)
 	while (i < args.len)
 	{
 		String arg = args[i];
+		// -h 不以 -- 开头，得在位置参数分支之前单独认，否则被当 prompt 吃掉
+		if (arg == "-h") { o.help = true; i++; continue; }
 		if (!arg.starts_with("--"))
 		{
 			if (seen_prompt)

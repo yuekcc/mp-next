@@ -130,8 +130,18 @@ fn String make_temp_path(Allocator allocator, String stem, String ext) @private
 // （答案为空串），只有两者都未定义时才视作本轮没给最终答案。
 fn void build_python_script(DString* script, String code)
 {
+	// 标记围栏：模型代码跑在脚本顶层，reconfigure 必须在代码之前——Windows 上子进程的
+	// stdout/stderr 管道是文本模式，\n 会被翻译成 \r\n，观察输出就不再与代码实际打印
+	// 的字节一致（模型照观察结果写文件会引入 \r）。newline="\n" 关掉翻译；POSIX 上本就
+	// 不翻译，此调用无副作用。
 	script.append("import sys\n");
 	script.append("_llmcli_final_path = sys.argv[1]\n");
+	script.append(
+		"try:\n"
+		"    sys.stdout.reconfigure(newline=\"\\n\")\n"
+		"    sys.stderr.reconfigure(newline=\"\\n\")\n"
+		"except Exception:\n"
+		"    pass\n");
 	script.append_string(code);
 	if (!code.ends_with("\n")) script.append("\n");
 	script.append(
@@ -261,7 +271,11 @@ fn Execution run_python(String code)
 	String output_file = "";
 	bool truncated = false;
 	String[] lines = full.split(tmem, "\n");
-	if (lines.len > OUTPUT_LINE_LIMIT)
+	// 以 \n 结尾的文本 split 出一个尾部空元素：留着会在拼接时多出一个空行，空输出则
+	// 变成 "\n"，agent 的"（无输出）"兜底永远走不到。先去掉它再数真实行数。
+	usz line_count = lines.len;
+	if (line_count && lines[line_count - 1].len == 0) line_count--;
+	if (line_count > OUTPUT_LINE_LIMIT)
 	{
 		truncated = true;
 		// 完整输出落盘（临时目录），截断只保留末 2000 行。
@@ -280,11 +294,18 @@ fn Execution run_python(String code)
 	}
 
 	DString result = dstring::new(tmem);
-	usz start = truncated ? lines.len - OUTPUT_LINE_LIMIT : 0;
-	for (usz i = start; i < lines.len; i++) result.appendf("%s\n", lines[i]);
+	usz start = truncated ? line_count - OUTPUT_LINE_LIMIT : 0;
+	for (usz i = start; i < line_count; i++) result.appendf("%s\n", lines[i]);
 	if (truncated)
 	{
-		result.appendf("... (truncated, full output stored at %s)\n", output_file);
+		if (output_file.len)
+		{
+			result.appendf("... (truncated, full output stored at %s)\n", output_file);
+		}
+		else
+		{
+			result.appendf("... (truncated)\n");
+		}
 	}
 	if (code_exit != 0)
 	{

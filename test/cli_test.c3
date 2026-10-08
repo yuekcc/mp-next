@@ -254,6 +254,16 @@ fn void test_parse_help_returns_immediately() @test
 	test::eq(parsed.ctx.system_prompt, "");
 }
 
+// -h 不以 -- 开头，会被位置参数分支当 prompt 吃掉——必须单独认（HELP 里写了 `-h, --help`）
+fn void test_parse_dash_h_is_help() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "-h" });
+	test::eq(parsed.ctx.help, true);
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.prompt, "");
+	test::eq(parsed.ctx.user_input, "");
+}
+
 // --list-sessions 同理，且不要求 --model / --api-key（与 001 的 AC 一致）
 fn void test_parse_list_sessions_returns_immediately() @test
 {

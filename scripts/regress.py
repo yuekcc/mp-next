@@ -206,6 +206,11 @@ def s2_block_loop(mock):
         check("S2 代码块循环：执行输出作为 user 消息回填",
               observation["role"] == "user" and "hello-from-tool" in (observation.get("content") or ""),
               json.dumps(observation, ensure_ascii=False))
+        # Windows 子进程管道是文本模式，\n 会被翻译成 \r\n——观察输出必须与代码实际
+        # 打印的字节一致，否则模型照观察结果写文件会引入 \r
+        check("S2 代码块循环：观察输出无 CRLF 污染",
+              "\r" not in (observation.get("content") or ""),
+              json.dumps(observation, ensure_ascii=False))
         check("S2 请求体 stream=false", second.get("stream") is False, str(second.get("stream")))
         check("S2 请求体不带 tools（RLM 不用 tools 协议）", "tools" not in second, str(second.keys()))
 
@@ -270,6 +275,25 @@ def s2_multi_block():
               "first" in proc.stderr and "second" not in proc.stderr, repr(proc.stderr))
         check("S2 多代码块：stderr 告警只执行第一个",
               "只执行第一个" in proc.stderr, repr(proc.stderr[-400:]))
+    finally:
+        server.stop()
+
+
+def s2_no_output():
+    """AC: 代码无输出时，观察消息回填“（无输出）”而不是一个空行。"""
+    server = Mock("no_output", port=PORT + 28)
+    try:
+        server.reset()
+        proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url],
+                       stdin_text="静默")
+        check("S2 无输出：退出码 0", proc.returncode == 0, proc.stderr)
+        requests = server.requests()
+        check("S2 无输出：两轮收尾", len(requests) == 2, str(len(requests)))
+        if len(requests) >= 2:
+            observation = requests[1]["messages"][-1]
+            check("S2 无输出：观察消息是（无输出）",
+                  observation.get("content") == "（无输出）",
+                  json.dumps(observation, ensure_ascii=False))
     finally:
         server.stop()
 
@@ -651,6 +675,7 @@ def main():
         s2_final_empty()
         s2_final_file(1)
         s2_multi_block()
+        s2_no_output()
         s2_error_paths()
         s3_sessions(mock, args.verbose)
         s3_persist_per_turn()

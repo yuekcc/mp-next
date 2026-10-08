@@ -85,6 +85,11 @@ SCENARIOS = {
             "reasoning_content": "step 1: ...\nstep 2: ...",
         }
     ],
+    # 无输出的代码：观察消息应回填“（无输出）”而不是一个空行
+    "no_output": [
+        {"finish_reason": "stop", "content": "无声操作。\n```python\nx = 1\n```"},
+        {"finish_reason": "stop", "content": "done-no-output"},
+    ],
     "bad_json": [{"__raw__": "this is not json"}],
     "http_500": [{"__status__": 500, "content": "internal boom"}],
     "no_answer": [{"finish_reason": "stop", "content": ""}],
