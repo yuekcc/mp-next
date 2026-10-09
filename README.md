@@ -35,6 +35,7 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 ## 文档
 
 - [docs/arch.md](docs/arch.md) — 架构设计（RLM loop、模块结构与设计取舍）
+- [docs/rlm.md](docs/rlm.md) — RLM 引擎设计（shellm 等价实现的目标形态与迁移路径）
 - [docs/sessions.md](docs/sessions.md) — 会话存储（文件格式、落盘时机与清理）
 - [docs/ci.md](docs/ci.md) — CI 集成（非交互用法与超时止损）
 - [docs/skills.md](docs/skills.md) — 技能（skills）发现与注入
