@@ -181,6 +181,29 @@ def s1_help(mock):
     check("S1 --help：说明 FINAL / FINAL_FILE 报捷", "FINAL" in proc.stdout, proc.stdout[:200])
 
 
+def s1_print_system_prompt(mock):
+    """AC: --print-system-prompt 打印实际会发的系统提示词；不要求凭据、不读输入、不发请求。"""
+    mock.reset()
+    proc = run_cli(["--print-system-prompt"])
+    check("S1 --print-system-prompt：退出码 0", proc.returncode == 0, proc.stderr)
+    check("S1 --print-system-prompt：stdout 含内置系统提示词",
+          "系统令" in proc.stdout, repr(proc.stdout[:200]))
+    check("S1 --print-system-prompt：stderr 无过程日志", proc.stderr == "", repr(proc.stderr))
+    check("S1 --print-system-prompt：不发任何请求", len(mock.requests()) == 0)
+
+    # 与 --system-prompt 组合：打印的应是该来源装配后的结果（占位符已展开）
+    mock.reset()
+    proc = run_cli(["--print-system-prompt", "--system-prompt", "MARKER {{os}}"])
+    check("S1 --print-system-prompt：采用显式 --system-prompt 且展开占位符",
+          proc.stdout.startswith("MARKER ") and "{{" not in proc.stdout,
+          repr(proc.stdout[:120]))
+
+    # 与其它动作开关同用属用法错误
+    proc = run_cli(["--print-system-prompt", "--list-skills"])
+    check("S1 --print-system-prompt 与动作开关冲突：退出码 2", proc.returncode == 2,
+          "exit=%d" % proc.returncode)
+
+
 def s2_block_loop(mock):
     """AC: 代码块 → 本地执行 → 输出作为下一条 user 消息回填 → 无代码块回复收尾。"""
     mock.reset()
@@ -669,6 +692,7 @@ def main():
     mock = Mock("block_loop")
     try:
         s1_help(simple_mock)
+        s1_print_system_prompt(simple_mock)
         s1_single_turn(simple_mock, args.verbose)
         s2_block_loop(mock)
         s2_block_final(mock)

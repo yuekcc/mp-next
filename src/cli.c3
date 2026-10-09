@@ -3,9 +3,12 @@ module llmcli::cli;
 import std::io;
 import std::core::mem::allocators;
 import std::time::datetime;
-import llmcli::buf, llmcli::session;
+import llmcli::buf, llmcli::session, llmcli::skill;
 
 // ---- 常量 ----
+
+// 技能资产目录名：技能放在 <assets_dir>/skills/<name>/SKILL.md，默认 .agents。
+const String SKILLS_ASSETS_DIR = ".agents";
 
 // 退出码约定（PRD 已确认细分）
 const int EXIT_OK = 0;           // 成功
@@ -51,6 +54,8 @@ struct Ctx
 
 	// --- 动作开关：不改运行配置，只决定 main 走哪条路（然后立刻返回） ---
 	bool list_sessions;
+	bool list_skills;
+	bool print_system_prompt;
 	bool help;
 }
 
@@ -110,6 +115,8 @@ fn ParseResult parse(String[] args)
 		if (name == "--debug") { o.debug = true; i++; continue; }
 		if (name == "--no-color") { o.no_color = true; i++; continue; }
 		if (name == "--list-sessions") { o.list_sessions = true; i++; continue; }
+		if (name == "--list-skills") { o.list_skills = true; i++; continue; }
+		if (name == "--print-system-prompt") { o.print_system_prompt = true; i++; continue; }
 
 		if (name == "--max-turns")
 		{
@@ -146,19 +153,27 @@ fn ParseResult parse(String[] args)
 		i++;
 	}
 
-	// --help / --list-sessions 不需要 api-key、model 与输入
-	if (o.help || o.list_sessions) return res;
+	// --system-prompt / --system-prompt-file 互斥对所有模式都成立，放在动作短路之前
+	if (o.system_prompt.len && o.system_prompt_file.len)
+	{
+		res.error = "--system-prompt 与 --system-prompt-file 互斥";
+		return res;
+	}
+
+	// --print-system-prompt 也是"看完即走"的动作，与其它动作开关互斥，避免行为歧义
+	if (o.print_system_prompt && (o.help || o.list_sessions || o.list_skills))
+	{
+		res.error = "--print-system-prompt 不能与 --help / --list-sessions / --list-skills 同用";
+		return res;
+	}
+
+	// --help / --list-sessions / --list-skills / --print-system-prompt 不需要 api-key、model 与输入
+	if (o.help || o.list_sessions || o.list_skills || o.print_system_prompt) return res;
 
 	// session-id 会直接当文件名用，在读任何输入之前先挡住路径穿越与非法字符
 	if (o.session_id.len && !session::valid_id(o.session_id))
 	{
 		res.error = "--session-id 只能包含文件名安全字符，且不能含 ..";
-		return res;
-	}
-
-	if (o.system_prompt.len && o.system_prompt_file.len)
-	{
-		res.error = "--system-prompt 与 --system-prompt-file 互斥";
 		return res;
 	}
 
@@ -212,8 +227,7 @@ fn ParseResult resolve(String[] args)
 {
 	ParseResult res = parse(args);
 	Ctx* o = &res.ctx;
-	if (res.error.len || o.help || o.list_sessions) return res;
-
+	if (res.error.len || o.help || o.list_sessions || o.list_skills) return res;
 	if (o.system_prompt_file.len)
 	{
 		// 读进来后统一走 expand_prompt_placeholders 复制到 mem，这里用 tmem 不留中间缓冲
@@ -225,6 +239,13 @@ fn ParseResult resolve(String[] args)
 			return res;
 		}
 		o.system_prompt = (String)data;
+	}
+
+	// --print-system-prompt：只装配系统提示词给 main 打印，不要求 api-key / model，也不碰输入
+	if (o.print_system_prompt)
+	{
+		assemble_system_prompt(o);
+		return res;
 	}
 
 	if (!o.api_key.len)
@@ -270,9 +291,18 @@ fn ParseResult resolve(String[] args)
 
 	// 系统提示词：没给就用编译期嵌入的默认提示词（src/system_prompt.md），再展开环境占位符。
 	// 放在最后，让参数错误路径不产生 mem 分配。
+	assemble_system_prompt(o);
+	return res;
+}
+
+// 装配系统提示词：来源（--system-prompt / --system-prompt-file / 内置默认）→ 展开占位符
+// → 追加本机 skill 列表。--print-system-prompt 与真实运行共用这一处，保证打印的就是
+// 实际会发给端点的内容。结果落在 o.system_prompt（mem 堆串，由调用方释放）。
+fn void assemble_system_prompt(Ctx* o)
+{
 	if (!o.system_prompt.len) o.system_prompt = $embed("system_prompt.md");
 	o.system_prompt = expand_prompt_placeholders(o.system_prompt);
-	return res;
+	o.system_prompt = inject_skills(o.system_prompt);
 }
 
 fn String host_os()
@@ -304,6 +334,23 @@ fn String expand_prompt_placeholders(String text)
 	return out.copy_str(mem);
 }
 
+// 把本机发现的 skill 列表追加到系统提示词末尾（发现与组装在 skill 模块）。
+// 无 skill 时原样返回，系统提示词里不留任何痕迹。
+fn String inject_skills(String prompt)
+{
+	skill::SkillHub hub;
+	hub.init(mem, SKILLS_ASSETS_DIR);
+	defer hub.free();
+
+	String block = hub.print_installed(tmem);
+	if (!block.len) return prompt;
+
+	// prompt 一定来自 expand_prompt_placeholders 的 mem 堆串，拼接后旧串即可释放
+	String appended = string::format(mem, "%s\n\n## 可用技能\n\n%s\n", prompt, block);
+	free(prompt.ptr);
+	return appended;
+}
+
 // ---- --help 文本（就是这个 CLI 的产品文档） ----
 
 const String HELP = `llmcli - 把 LLM 接进 shell 流水线
@@ -331,6 +378,8 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
                            两者都不给时用内置默认提示词（src/system_prompt.md）；
                            三种来源都支持 {{date}} / {{cwd}} / {{os}} 占位符
   --list-sessions          列出已有会话（id、更新时间、消息数），随后退出
+  --list-skills            列出本机可用 skill（~/.agents/skills 与 ./.agents/skills），随后退出
+  --print-system-prompt    打印本次实际会发给端点的系统提示词（含已注入的 skill 列表），随后退出
   --config-dir <dir>       配置目录（会话根目录），默认 %USERPROFILE%\.llmcli
                            （Linux/macOS: ~/.llmcli）；不读任何环境变量
   --quiet                  stderr 只保留错误
@@ -354,6 +403,10 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 注意：位置参数 / stdin 管道 / --input-file 严格三选一。stdin 是管道时不能再写位置参数
       （cat x.md 接管道再写 "总结一下" 会报用法错误）。要让模型既看内容又听指令，请把指令
       写进 --system-prompt / --system-prompt-file，内容走 stdin 或 --input-file。
+
+系统提示词还会自动追加本机可用 skill 列表（发现于 ~/.agents/skills 与
+  ./.agents/skills 下各 <name>/SKILL.md），模型可据此用 Python 读取并照其执行。
+  用 --list-skills 查看当前发现了哪些。
 
 会话存储：
   默认 %USERPROFILE%\.llmcli\sessions\<id>.jsonl（Linux/macOS 为 ~/.llmcli），

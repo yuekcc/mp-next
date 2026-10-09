@@ -1,7 +1,7 @@
 module llmcli;
 
 import std::io;
-import llmcli::agent, llmcli::cli, llmcli::http, llmcli::log, llmcli::runtime, llmcli::session;
+import llmcli::agent, llmcli::cli, llmcli::http, llmcli::log, llmcli::runtime, llmcli::session, llmcli::skill;
 
 fn int list_sessions()
 {
@@ -15,6 +15,26 @@ fn int list_sessions()
 	{
 		io::printfn("%s\t%s\t%d 条消息", item.id, item.updated, (int)item.count);
 	}
+	return cli::EXIT_OK;
+}
+
+fn int list_skills()
+{
+	skill::SkillHub hub;
+	hub.init(mem, cli::SKILLS_ASSETS_DIR);
+	defer hub.free();
+
+	String brief = hub.print_brief(tmem);
+	io::print(brief);
+	if (!brief.ends_with("\n")) io::printn("");
+	return cli::EXIT_OK;
+}
+
+// 打印实际会作为 messages[0] 发给端点的系统提示词（resolve 已装配好）。
+fn int print_system_prompt(cli::Ctx* ctx)
+{
+	io::print(ctx.system_prompt);
+	if (!ctx.system_prompt.ends_with("\n")) io::printn("");
 	return cli::EXIT_OK;
 }
 
@@ -40,6 +60,8 @@ fn int main(String[] args)
 		return cli::EXIT_USAGE;
 	}
 	if (parsed.ctx.list_sessions) return list_sessions();
+	if (parsed.ctx.list_skills) return list_skills();
+	if (parsed.ctx.print_system_prompt) return print_system_prompt(&parsed.ctx);
 
 	// 一次真实运行：装中断处理器、起 libcurl，然后交给 Trace 循环。
 	runtime::install_interrupt_handler();

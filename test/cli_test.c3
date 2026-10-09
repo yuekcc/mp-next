@@ -273,6 +273,60 @@ fn void test_parse_list_sessions_returns_immediately() @test
 	test::eq(parsed.ctx.user_input, "");
 }
 
+// ---- --print-system-prompt -------------------------------------------------
+
+// 动作开关：纯解析即完成，不要求 --model / --api-key，也不读输入
+fn void test_parse_print_system_prompt_returns_immediately() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--print-system-prompt" });
+	test::eq(parsed.ctx.print_system_prompt, true);
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.user_input, "");
+	test::eq(parsed.ctx.system_prompt, "");
+}
+
+// 与其它动作开关同用属用法错误
+fn void test_parse_print_system_prompt_conflicts_with_actions() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--print-system-prompt", "--list-skills" });
+	test::@check(parsed.error.contains("--print-system-prompt"),
+	             "应提示与动作开关冲突，实际：%s", parsed.error);
+
+	parsed = cli::parse({ "llmcli", "--print-system-prompt", "--list-sessions" });
+	test::@check(parsed.error.len != 0, "与 --list-sessions 同用应报错，实际：%s", parsed.error);
+}
+
+// 系统提示词来源互斥对 print 模式同样成立（不能在动作短路处漏检）
+fn void test_parse_print_system_prompt_still_checks_source_conflict() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--print-system-prompt",
+	                                     "--system-prompt", "a", "--system-prompt-file", "b" });
+	test::@check(parsed.error.contains("互斥"), "print 模式也要查来源互斥，实际：%s", parsed.error);
+}
+
+// resolve 在 print 模式下补齐系统提示词，但不要求 api-key / model
+fn void test_resolve_print_system_prompt_needs_no_credentials() @test
+{
+	cli::ParseResult parsed = cli::resolve({ "llmcli", "--print-system-prompt" });
+	test::eq(parsed.error, "");
+	test::@check(parsed.ctx.system_prompt.len > 0, "应装配出系统提示词");
+	test::@check(!parsed.ctx.system_prompt.contains("{{"), "占位符应已展开");
+	test::eq(parsed.ctx.user_input, "");
+	free(parsed.ctx.system_prompt.ptr);
+}
+
+// print 模式用的是显式 --system-prompt（而不是内置默认），保证打印的就是实际会发的内容
+fn void test_resolve_print_system_prompt_uses_explicit_source() @test
+{
+	cli::ParseResult parsed = cli::resolve({ "llmcli", "--print-system-prompt",
+	                                       "--system-prompt", "自定义 {{os}} 提示" });
+	test::eq(parsed.error, "");
+	test::@check(parsed.ctx.system_prompt.starts_with("自定义 "), "应使用指定提示词，实际：%s",
+	             parsed.ctx.system_prompt);
+	test::@check(!parsed.ctx.system_prompt.contains("{{"), "占位符应已展开");
+	free(parsed.ctx.system_prompt.ptr);
+}
+
 // 用法错误同样不读输入：--input-file 指向不存在的文件也不该被打开
 fn void test_parse_usage_error_needs_no_input() @test
 {
