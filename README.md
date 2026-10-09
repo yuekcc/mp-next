@@ -25,30 +25,6 @@ llmcli --model gpt-4o-mini --api-key $KEY --session-id work "把 src/cli.c3 里�
 
 输入来源（位置参数 / stdin / `--input-file`）严格三选一；完整参数、退出码与示例见 `llmcli --help`。
 
-## 技能（skills）
-
-本工具会自动发现本机技能，把可用列表追加进系统提示词，模型据此自行用 Python 读取对应
-`SKILL.md` 并照其执行。发现两处目录（同名时项目级覆盖全局级）：
-
-- 全局：`~/.agents/skills/<name>/SKILL.md`
-- 项目：`<当前目录>/.agents/skills/<name>/SKILL.md`
-
-每个 `SKILL.md` 以 front matter 给出 `name` 与 `description`，其后为技能正文；三者齐全才算
-一个有效 skill。用 `--list-skills` 查看当前发现的结果：
-
-```bash
-llmcli --list-skills
-```
-
-想看某次运行实际会发给端点的系统提示词（含已注入的 skill 列表），用：
-
-```bash
-llmcli --print-system-prompt
-```
-
-它不要求 `--model` / `--api-key`，也不读输入；可与 `--system-prompt` / `--system-prompt-file`
-组合，验证自定义提示词与技能列表拼接后的最终结果。
-
 ## 测试
 
 ```bash
@@ -58,8 +34,10 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 
 ## 文档
 
-- [docs/sessions-and-ci.md](docs/sessions-and-ci.md) — 会话存储与 CI 集成
-- [docs/prds/001.md](docs/prds/001.md) — 产品需求文档（shellm 式 RLM agent loop 基线）
+- [docs/arch.md](docs/arch.md) — 架构设计（RLM loop、模块结构与设计取舍）
+- [docs/sessions.md](docs/sessions.md) — 会话存储（文件格式、落盘时机与清理）
+- [docs/ci.md](docs/ci.md) — CI 集成（非交互用法与超时止损）
+- [docs/skills.md](docs/skills.md) — 技能（skills）发现与注入
 - [docs/references/chat-completion-api.md](docs/references/chat-completion-api.md) — 端点协议字段参考资料
 
 ## 注意

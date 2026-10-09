@@ -1,8 +1,9 @@
-# 会话存储与 CI 集成
+# 会话存储
+
+`--session-id <id>` 把整条 Trace 的消息按行追加到本地会话文件，实现跨调用续话。本文说明
+文件位置、内容格式、落盘时机与清理方式。
 
 ## 会话文件在哪
-
-`--session-id <id>` 会把整轮 Trace 的消息按行追加到：
 
 ```
 默认根目录    %USERPROFILE%\.llmcli        （Linux/macOS: ~/.llmcli）
@@ -68,31 +69,3 @@ Remove-Item "$env:USERPROFILE\.llmcli\sessions\work.jsonl"
 - API key 不落盘，stderr 上出现时一律脱敏（`sk-***abc`）。
 - 模型生成的 Python 代码默认放行任意命令：提示注入或模型误判会导致任意代码执行。每轮代码原文都会
   打印到 stderr 供审计，`--help` 里也有警示。
-- 默认不设 turn 上限、不设 HTTP/命令超时、不截断代码输出。需要止损就加 `--max-turns <n>`
-  （n>0 生效，达到上限时 stderr 说明原因、stdout 为空、退出码 3）；不设时用 Ctrl+C 中断——
-  正在执行的子进程会被一并终止，不留孤儿，退出码 130。
-
-## CI 里的用法
-
-`llmcli` 不需要任何交互输入，stdout 只有最终答案，可直接重定向或交给 `jq`；
-输出不是终端时不会出现 ANSI 颜色（也可显式加 `--no-color`）。
-
-因为 v1 没有内置超时，**CI 中请用外部超时包裹**：
-
-```bash
-timeout 120 llmcli --model "$MODEL" --api-key "$KEY" --quiet \
-    --input-file task.md --session-id "$CI_JOB_ID" \
-  > answer.txt
-```
-
-GitHub Actions 里可以再叠加 job 级超时：
-
-```yaml
-jobs:
-  ask:
-    timeout-minutes: 5
-    steps:
-      - run: timeout 120 llmcli --model "$MODEL" --api-key "${{ secrets.KEY }}" --quiet --input-file task.md
-```
-
-排查问题时加 `--debug`：会打印原始请求/响应（密钥脱敏、长文本仅为可读性截断）。
