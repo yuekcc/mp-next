@@ -1,6 +1,6 @@
 # 技能（skills）
 
-llmcli 会自动发现本机技能，把可用列表追加进系统提示词，模型据此自行用 Python 读取对应
+llmcli 会自动发现本机技能，把可用列表追加进系统提示词，模型据此自行用 bash 读取对应
 `SKILL.md` 并照其执行。发现两处目录（同名时项目级覆盖全局级）：
 
 - 全局：`~/.agents/skills/<name>/SKILL.md`

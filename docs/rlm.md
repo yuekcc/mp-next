@@ -8,7 +8,9 @@
 阅读前提：现状见 [arch.md](arch.md)（当前实现），本文只讲**目标形态与迁移路径**。会话文件格式见
 [sessions.md](sessions.md)（将被 trajectory 取代，保留兼容说明）。
 
-> 状态：设计稿。沙箱（Docker）**不在本期范围**，见「非目标」。
+> 状态：**已落地**（本期范围）。沙箱（Docker）**不在本期范围**，见「非目标」。
+> 实现见 `src/`：`agent.c3`（主循环）、`trajectory.c3`、`context.c3`、`llm.c3`、`runtime.c3`
+> （bash Executor）。「会话文件格式」一节描述的目标形态现由 `trajectory.c3` 承担。
 
 ---
 

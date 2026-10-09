@@ -9,13 +9,15 @@
 - 输出不是终端时不会出现 ANSI 颜色（也可显式加 `--no-color`）。
 - stdout 只有最终答案，过程日志全部走 stderr，重定向 stdout 即可拿到干净结果。
 
-## 外部超时包裹
+## 超时止损
 
-因为 v1 没有内置超时，**CI 中请用外部超时包裹**：
+执行器自带三看门狗（空闲 / 输出量 / 墙钟），单条命令失控会被杀并回填结构化反馈；但整个 run 仍可能
+多轮空转。CI 中建议**外部超时 + `--max-iterations`** 双保险：
 
 ```bash
 timeout 120 llmcli --model "$MODEL" --api-key "$KEY" --quiet \
-    --input-file task.md --session-id "$CI_JOB_ID" \
+    --input-file task.md --traj "$CI_JOB_ID" \
+    --max-iterations 20 \
   > answer.txt
 ```
 
@@ -31,11 +33,15 @@ jobs:
 
 ## 排查问题
 
-加 `--debug`：会打印原始请求/响应（密钥脱敏、长文本仅为可读性截断）。
+- 加 `--debug`：会打印原始请求/响应（密钥脱敏、长文本仅为可读性截断）。
+- 看轨迹：`llmcli traj tail <name> [n]` / `llmcli traj show <name>` / `llmcli traj search <name> <pat>`
+  （轨迹根由 `--traj-dir` / `--config-dir` 决定）。
+- 看渲染：`llmcli context --traj <name>`。
 
 ## 相关风险
 
-- 模型生成的 Python 代码默认放行任意命令：提示注入或模型误判会导致任意代码执行。每轮代码原文都会
+- 模型生成的 bash 代码默认放行任意命令：提示注入或模型误判会导致任意代码执行。每轮代码原文都会
   打印到 stderr 供审计。
-- 默认不设 turn 上限、不设 HTTP/命令超时、不截断代码输出。需要止损就加 `--max-turns <n>`
-  （n>0 生效，达到上限时 stderr 说明原因、stdout 为空、退出码 3）；或用上面的外部超时包裹。
+- 默认不设 iteration 上限。需要止损就加 `--max-iterations <n>`（n>0 生效，达到上限时 stderr 说明
+  原因、stdout 为空、退出码 3）；执行器三个看门狗阈值分别用
+  `--inactivity-timeout` / `--max-output-size` / `--max-exec-time` 调整；或用外部超时包裹。

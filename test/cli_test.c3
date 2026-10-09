@@ -95,7 +95,7 @@ fn void test_max_turns_parsing() @test
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k",
 	                                       string::tformat("--input-file=%s", path), "--max-turns=3" });
 	test::eq(parsed.error, "");
-	test::eq(parsed.ctx.max_turns, 3);
+	test::eq(parsed.ctx.max_iterations, 3);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 
@@ -103,7 +103,7 @@ fn void test_max_turns_parsing() @test
 	parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
 	                      "--max-turns", "7" });
 	test::eq(parsed.error, "");
-	test::eq(parsed.ctx.max_turns, 7);
+	test::eq(parsed.ctx.max_iterations, 7);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
@@ -116,14 +116,14 @@ fn void test_max_turns_zero_or_negative_means_unlimited() @test
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k",
 	                                       "--input-file", path, "--max-turns", "0" });
 	test::eq(parsed.error, "");
-	test::eq(parsed.ctx.max_turns, 0);
+	test::eq(parsed.ctx.max_iterations, 0);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 
 	parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
 	                      "--max-turns", "-5" });
 	test::eq(parsed.error, "");
-	test::eq(parsed.ctx.max_turns, 0);
+	test::eq(parsed.ctx.max_iterations, 0);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
@@ -143,7 +143,7 @@ fn void test_max_turns_defaults_to_unlimited() @test
 	(void)file::save(path, "内容");
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k",
 	                                       "--input-file", path });
-	test::eq(parsed.ctx.max_turns, 0);
+	test::eq(parsed.ctx.max_iterations, 0);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
@@ -151,14 +151,14 @@ fn void test_max_turns_defaults_to_unlimited() @test
 fn void test_list_sessions_skips_required_flags() @test
 {
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--list-sessions" });
-	test::eq(parsed.ctx.list_sessions, true);
+	test::eq(parsed.ctx.list_trajectories, true);
 	test::eq(parsed.error.len, 0);
 }
 
 fn void test_invalid_session_id_is_usage_error() @test
 {
-	cli::ParseResult parsed = cli::resolve({ "llmcli", "--session-id", "../escape" });
-	test::@check(parsed.error.contains("--session-id"), "应提示 session-id 非法，实际：%s", parsed.error);
+	cli::ParseResult parsed = cli::resolve({ "llmcli", "--traj", "../escape" });
+	test::@check(parsed.error.contains("--traj"), "应提示 traj id 非法，实际：%s", parsed.error);
 }
 
 fn void test_default_system_prompt_is_embedded_and_expanded() @test
@@ -212,13 +212,13 @@ fn void test_explicit_system_prompt_wins_and_expands() @test
 fn void test_parse_flags_without_io() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
-	                                     "--session-id=work", "--max-turns=3",
+	                                     "--traj=work", "--max-iterations=3",
 	                                     "--quiet", "--debug", "--no-color", "问题" });
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.model, "m");
 	test::eq(parsed.ctx.api_key, "k");
-	test::eq(parsed.ctx.session_id, "work");
-	test::eq(parsed.ctx.max_turns, 3);
+	test::eq(parsed.ctx.traj_id, "work");
+	test::eq(parsed.ctx.max_iterations, 3);
 	test::eq(parsed.ctx.prompt, "问题");
 	test::eq(parsed.ctx.quiet, true);
 	test::eq(parsed.ctx.debug, true);
@@ -268,7 +268,7 @@ fn void test_parse_dash_h_is_help() @test
 fn void test_parse_list_sessions_returns_immediately() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--list-sessions" });
-	test::eq(parsed.ctx.list_sessions, true);
+	test::eq(parsed.ctx.list_trajectories, true);
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.user_input, "");
 }
@@ -349,9 +349,9 @@ fn void test_parse_usage_error_needs_no_input() @test
 fn void test_parse_rejects_invalid_session_id_without_reading_input() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
-	                                     "--session-id=../escape",
+	                                     "--traj=../escape",
 	                                     "--input-file", "build/no-such-file.txt" });
-	test::@check(parsed.error.contains("--session-id"), "应提示 session-id 非法，实际：%s", parsed.error);
+	test::@check(parsed.error.contains("--traj"), "应提示 traj id 非法，实际：%s", parsed.error);
 	test::eq(parsed.ctx.user_input, "");
 }
 
@@ -383,7 +383,7 @@ fn void test_resolve_fills_what_parse_leaves_empty() @test
 fn void test_resolve_keeps_every_parsed_field() @test
 {
 	String[] args = { "llmcli", "--model=m", "--api-key=k", "--api-url=http://x/v1",
-	                  "--config-dir=build/cfg", "--session-id=s1", "--max-turns=4",
+	                  "--config-dir=build/cfg", "--traj=s1", "--max-iterations=4",
 	                  "--quiet", "--no-color", "问题" };
 	cli::ParseResult parsed = cli::parse(args);
 	test::eq(parsed.error, "");
@@ -394,12 +394,12 @@ fn void test_resolve_keeps_every_parsed_field() @test
 	test::eq(resolved.ctx.api_key, parsed.ctx.api_key);
 	test::eq(resolved.ctx.api_url, parsed.ctx.api_url);
 	test::eq(resolved.ctx.config_dir, parsed.ctx.config_dir);
-	test::eq(resolved.ctx.session_id, parsed.ctx.session_id);
-	test::eq(resolved.ctx.max_turns, parsed.ctx.max_turns);
+	test::eq(resolved.ctx.traj_id, parsed.ctx.traj_id);
+	test::eq(resolved.ctx.max_iterations, parsed.ctx.max_iterations);
 	test::eq(resolved.ctx.quiet, parsed.ctx.quiet);
 	test::eq(resolved.ctx.no_color, parsed.ctx.no_color);
 	test::eq(resolved.ctx.debug, parsed.ctx.debug);
-	test::eq(resolved.ctx.list_sessions, parsed.ctx.list_sessions);
+	test::eq(resolved.ctx.list_trajectories, parsed.ctx.list_trajectories);
 	test::eq(resolved.ctx.help, parsed.ctx.help);
 
 	// 位置参数路径：prompt 原样搬运成 user_input（同一个切片，不复制）

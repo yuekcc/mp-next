@@ -55,7 +55,7 @@ fn Message message_from_json(Allocator allocator, CJsonItem* obj)
 // ---- 请求组装 ----
 
 // 组装一次 chat completions 请求体（tmem，属本轮 scratch）。
-// RLM 循环不用 tools 协议：模型写 ```python 代码块，执行输出作为下一条 user 消息回填。
+// RLM 循环不用 tools 协议：模型写 ```bash 代码块，执行输出作为下一条 user 消息回填。
 // reasoning_content 只入会话存档，绝不回传给端点（message_to_request_json 已剥离）。
 fn String build_request(String model, Message[] messages)
 {

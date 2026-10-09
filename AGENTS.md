@@ -17,13 +17,13 @@ shellm 式 RLM loop。用法、参数、构建/测试命令与风险提示见 [R
 ## File Map
 
 ```
-cmd/llmcli.c3     → main：resolve → 日志/脱敏 → help / list-sessions / list-skills / run 分发
+cmd/llmcli.c3     → main：子命令派发（shellm/traj/context/skills）+ 一次 run
 src/              → 实现模块，逐文件地图见 src/AGENTS.md
 test/*_test.c3    → @test 单元测试（命令见 README）
 scripts/          → mock_llm.py（离线假端点）、regress.py（端到端回归）
-docs/arch.md      → 架构设计（Trace/Turn 语义、模块结构与设计取舍）
-docs/rlm.md       → RLM 引擎设计（shellm 等价实现的目标形态与迁移路径）
-docs/sessions.md  → 会话存储（文件格式、落盘时机与清理）
+docs/arch.md      → 架构设计（RLM loop、模块结构与设计取舍）
+docs/rlm.md       → RLM 引擎设计（shellm 等价实现；现状已落地）
+docs/sessions.md  → 轨迹存储（文件格式、落盘时机与清理）
 docs/ci.md        → CI 集成（非交互用法与超时止损）
 docs/skills.md    → 技能发现与注入
 docs/references/  → 端点协议字段原文（chat-completion-api.md）

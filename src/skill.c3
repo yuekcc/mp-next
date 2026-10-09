@@ -13,7 +13,7 @@ import std::collections::list;
 //   - print_installed()：拼进系统提示词的 `<available_skills>` 块（模型据此决定读哪个）；
 //   - print_brief()：`--list-skills` 的简表，供人查看。
 //
-// llmcli 里 Python 是唯一工具，所以提示词让模型用 Python（open/pathlib）去读 SKILL.md，
+// llmcli 里 bash 是唯一工具，所以提示词让模型用 bash 去读 SKILL.md，
 // 而不是 mini_pi 里的 ReadFile 工具。
 
 // ---- 常量 ----

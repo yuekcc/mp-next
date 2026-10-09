@@ -45,38 +45,38 @@ SCENARIOS = {
     ],
     "block_loop": [
         {"finish_reason": "stop",
-         "content": "先跑一下。\n```python\nprint(\"hello-from-tool\")\n```"},
+         "content": "先跑一下。\n```bash\necho \"hello-from-tool\"\n```"},
         {"finish_reason": "stop", "content": "final answer"},
     ],
     "block_final": [
         {"finish_reason": "stop",
-         "content": "算好了。\n```python\nprint(\"computing\")\nFINAL = \"final answer\"\n```"},
+         "content": "算好了。\n```bash\necho \"computing\"\nFINAL=\"final answer\"\n```"},
     ],
     # FINAL 设为空串也算"设置过"（与 bash 版 [ -n "${FINAL+x}" ] 一致），当场以空答案收尾；
     # 若按真假值判断会误当未设，多跑一轮。
     "block_final_empty": [
         {"finish_reason": "stop",
-         "content": "无甚可说。\n```python\nFINAL = \"\"\n```"},
+         "content": "无甚可说。\n```bash\nFINAL=\"\"\n```"},
         {"finish_reason": "stop", "content": "这个不该出现"},
     ],
     # FINAL_FILE：代码写出文件并以此为最终答案，内容按字节取回
     "block_final_file": [
         {"finish_reason": "stop",
-         "content": "写好了。\n```python\nopen(r'{{FINALSRC}}', 'w', encoding='utf-8').write('从文件来的答案')\nFINAL_FILE = r'{{FINALSRC}}'\n```"},
+         "content": "写好了。\n```bash\nprintf '从文件来的答案' > '{{FINALSRC}}'\nFINAL_FILE='{{FINALSRC}}'\n```"},
     ],
     # 回复含多个代码块：只执行第一个，其余丢弃并告警
     "multi_block": [
         {"finish_reason": "stop",
-         "content": "```python\nprint(\"first\")\n```\n说明\n```python\nprint(\"second\")\n```"},
+         "content": "```bash\necho \"first\"\n```\n说明\n```bash\necho \"second\"\n```"},
         {"finish_reason": "stop", "content": "done"},
     ],
     "edit_task": [
         {"finish_reason": "stop", "reasoning_content": "先看看文件内容",
-         "content": "看看文件。\n```python\nprint(open(r'{{FILE}}', encoding=\"utf-8\").read())\n```"},
+         "content": "看看文件。\n```bash\ncat '{{FILE}}'\n```"},
         {"finish_reason": "stop",
-         "content": "改文件。\n```python\np = r'{{FILE}}'\ns = open(p, encoding=\"utf-8\").read()\nopen(p, \"w\", encoding=\"utf-8\").write(s.replace(\"old-text\", \"new-text\"))\n```"},
+         "content": "改文件。\n```bash\nsed -i 's/old-text/new-text/' '{{FILE}}'\n```"},
         {"finish_reason": "stop",
-         "content": "收尾。\n```python\nFINAL = \"edited {{FILE}}\"\n```"},
+         "content": "收尾。\n```bash\nFINAL=\"edited {{FILE}}\"\n```"},
     ],
     "reasoning": [
         {
@@ -87,7 +87,7 @@ SCENARIOS = {
     ],
     # 无输出的代码：观察消息应回填“（无输出）”而不是一个空行
     "no_output": [
-        {"finish_reason": "stop", "content": "无声操作。\n```python\nx = 1\n```"},
+        {"finish_reason": "stop", "content": "无声操作。\n```bash\n:\n```"},
         {"finish_reason": "stop", "content": "done-no-output"},
     ],
     "bad_json": [{"__raw__": "this is not json"}],
@@ -95,18 +95,29 @@ SCENARIOS = {
     "no_answer": [{"finish_reason": "stop", "content": ""}],
     "slow_command": [
         {"finish_reason": "stop",
-         "content": "```python\nimport subprocess\nsubprocess.run(r'{{SLEEP}}'.split())\n```"},
+         "content": "```bash\n{{SLEEP}}\n```"},
         {"finish_reason": "stop", "content": "done sleeping"},
     ],
-    # 两轮代码块，用 {{SESSION}} 指向当前会话文件，观察 Trace 中途是否已落盘
+    # 两轮代码块，用 {{SESSION}} 指向当前轨迹文件，观察 Trace 中途是否已落盘
     "two_code_calls": [
-        {"finish_reason": "stop", "content": "```python\nprint(\"first\")\n```"},
-        {"finish_reason": "stop", "content": "```python\nprint(open(r'{{SESSION}}', encoding=\"utf-8\").read())\n```"},
+        {"finish_reason": "stop", "content": "```bash\necho \"first\"\n```"},
+        {"finish_reason": "stop", "content": "```bash\ncat '{{SESSION}}'\n```"},
         {"finish_reason": "stop", "content": "done"},
     ],
-    # 永远返回不带 FINAL 的代码块（脚本用完后重复最后一条），用来验证 --max-turns 止损
+    # 永远返回不带 FINAL 的代码块（脚本用完后重复最后一条），用来验证 --max-iterations 止损
     "always_blocks": [
-        {"finish_reason": "stop", "content": "```python\nprint(\"spin\")\n```"},
+        {"finish_reason": "stop", "content": "```bash\necho \"spin\"\n```"},
+    ],
+    # 触发空闲看门狗：读一个永不来数据的 fifo（无输出即挂），或直接 sleep 且不产生输出
+    "idle_command": [
+        {"finish_reason": "stop", "content": "```bash\nsleep 600\n```"},
+        {"finish_reason": "stop", "content": "done idle"},
+    ],
+    # 子 run：生成代码显式调同一二进制起子 run。
+    # {{LLMCLI}}/{{APIKEY}}/{{APIURL}}/{{TRAJDIR}}/{{TRAJID}} 由回归替换。
+    "sub_run": [
+        {"finish_reason": "stop",
+         "content": "起一个子 run。\n```bash\n'{{LLMCLI}}' shellm \"子任务\" --model any --api-key '{{APIKEY}}' --api-url '{{APIURL}}' --traj-dir '{{TRAJDIR}}' > /dev/null 2>&1\nFINAL=\"parent done\"\n```"},
     ],
 }
 
