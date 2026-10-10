@@ -85,7 +85,9 @@ struct Trajectory
 // 轨迹根目录来源。只由 cmd 层在解析参数后设置一次（沿用 session 的约定：
 // 存放位置只由命令行决定，不读环境变量）。
 String traj_dir_opt @private;    // --traj-dir：直接作为根
-String config_dir_opt @private;  // --config-dir：根为 <config-dir>/traj
+// --config-dir：配置目录根。当前只用来派生轨迹根 <config-dir>/traj；预留此开关，将来
+// 需要配置文件 / 临时文件时也落在这个目录。
+String config_dir_opt @private;
 
 fn void configure(String traj_dir, String config_dir)
 {

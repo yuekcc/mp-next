@@ -255,7 +255,8 @@ stateDiagram-v2
 ### 4.4 `trajectory`：唯一真相源
 
 - 目录 `<root>/<hex8>-<slug>/trajectory.jsonl`；`root` 优先级 `--traj-dir` → `<config-dir>/traj` →
-  `~/.llmcli/traj`，只由命令行决定，不读环境变量。
+  `~/.llmcli/traj`，只由命令行决定，不读环境变量。`--config-dir` 目前只用来派生轨迹根，
+  保留为将来配置文件 / 临时文件的根目录。
 - 首行是头 `{"type":"trajectory"}`；其后每行一个 `Step`，**整步一次 write、append 原子**。
 - 大字段（超 8 KiB）spill 到 `blobs/<step_id>-<field>.blob`，步骤里存 `<field>_ref` + `<field>_bytes`。
 - `fork` 写 `{type:fork,child,slug}` 返子 id；`merge` 写 `{type:merge,from_traj}`。
