@@ -12,6 +12,25 @@
 c3c build        # 产物：build/llmcli(.exe)
 ```
 
+### 全静态构建（Windows）
+
+产物不依赖 `libcurl-x64.dll`（只留 Windows 自带系统 DLL）：
+
+```bash
+bash scripts/build-static.sh          # 默认用 zig cc 链接；产物 build/llmcli-static.exe
+CC=gcc bash scripts/build-static.sh   # 也可换成 gcc
+```
+
+用 c3c 只编译出 `.o`（`--target mingw-x64`），再由 zig cc（clang + lld，自带 mingw-w64）静态链接；
+curl 及其依赖来自仓库根的 `curl-8.22.0_3-win64-mingw/`（`CURL_DIR` 可覆盖）。
+
+c3l 里给 MSVC 用的两个预编译库都可从源码 / DLL 重新生成：
+
+```bash
+bash scripts/update-curl-implib.sh   # lib/curl.c3l/windows-x64/libcurl-x64.lib（从包内 DLL）
+bash scripts/update-cjson-lib.sh     # lib/cjson.c3l/windows-x64/cjson.lib（从 cJSON.c / cJSON.h）
+```
+
 ## 快速上手
 
 ```bash
