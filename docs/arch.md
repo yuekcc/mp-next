@@ -123,12 +123,12 @@ graph TD
 
 `main`（`cmd/llmcli.c3`）的编排顺序：
 
-1. `configure_dirs(args)`——扫出 `--traj-dir` 配置轨迹根（子命令也要认）。
-2. `command_index(args)`——第一个非全局-flag 参数命中命令名时走子命令派发（`traj`/`context`/`skills`），
-   否则走一次真实运行。子 run 就是生成代码再跑一次 `llmcli "<task>"`。
-3. 真实运行 `run_entry`：`cli::resolve(args)` → `trajectory::configure` → `log::init` /
-   `log::add_secret` → 动作短路（`--help` / 用法错误 / `--print-system-prompt`）→ `runtime::install_interrupt_handler()` → `http::http_init()` →
-   `agent::run(&ctx)`。
+1. `main`——命令名必须是第一个参数：`is_command(args[1])` 命中时走子命令派发
+   （`traj`/`context`/`skills`，先 `cli::configure_trajectory` 认目录 flag），否则走一次真实运行。
+   子 run 就是生成代码再跑一次 `llmcli "<task>"`。
+2. 真实运行 `run_entry`：`cli::resolve(args)` → `trajectory::configure` → `log::init` /
+   `log::add_secret` → 动作短路（`--help` / 用法错误 / `--print-system-prompt`）→
+   `runtime::install_interrupt_handler()` → `http::http_init()` → `agent::run(&ctx)`。
 
 ### 3.2 RLM 循环状态机
 

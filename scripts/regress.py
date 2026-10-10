@@ -85,11 +85,17 @@ class Mock:
 
 def run_cli(args, stdin_text=None, traj_dir=None, timeout=60, inherit_stdin=False):
     env = dict(os.environ)
-    # 轨迹根目录只由 --traj-dir 决定（不再读环境变量），每个场景一个隔离目录
+    # 轨迹根目录只由 --traj-dir 决定（不再读环境变量），每个场景一个隔离目录。
+    # 命令名必须是第一个参数：子命令场景把 --traj-dir 放在命令名之后，普通运行放在最前。
     root = traj_dir or os.path.join(WORK, "traj")
+    argv = list(args)
+    if argv and argv[0] in ("traj", "context", "skills"):
+        argv = [argv[0], "--traj-dir", root] + argv[1:]
+    else:
+        argv = ["--traj-dir", root] + argv
     kwargs = {"stdin": None} if inherit_stdin else {"input": stdin_text}
     proc = subprocess.run(
-        [exe_path(), "--traj-dir", root] + args,
+        [exe_path()] + argv,
         capture_output=True,
         text=True,
         encoding="utf-8",

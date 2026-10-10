@@ -38,7 +38,7 @@ llmcli context [--traj <name>]  # 打印渲染出的 messages
 llmcli skills                   # 列出本机可用 skill
 ```
 
-命令名是第一个非全局-flag 参数，无需软链/别名。
+命令名必须是第一个参数，无需软链/别名。
 
 ## 子 run
 

@@ -78,80 +78,49 @@ fn int run_entry(String[] args)
 
 // ---- 子命令（doc 7）：单二进制靠第一个参数派发 ----
 
-// 子命令名集合（doc 7）。shellm 等价 bin/shellm；traj/context/skills 是自省工具。
+// 子命令名集合。命令名必须是第一个参数（args[1]）。
 const String[] COMMANDS = { "traj", "context", "skills" };
 
-// 命令名位置：跳过子命令也认的全局 flag（目录 / 日志开关）后的第一个 token 才是命令名。
-// 这样 `llmcli --traj-dir X traj list` 与 `llmcli traj list` 都成立，而一个恰好叫 "traj"
-// 的位置参数 prompt（`llmcli --model m "traj"`）不会被误当命令——它的前一个 token 是
-// `--model` 的值，不在允许前缀里。
-fn sz command_index(String[] args)
+fn bool is_command(String arg) @private
 {
-	usz i = 1;
-	while (i < args.len)
-	{
-		String a = args[i];
-		if (a == "--traj-dir" || a == "--config-dir")
-		{
-			i += 2;
-			continue;
-		}
-		if (a.starts_with("--traj-dir=") || a.starts_with("--config-dir="))
-		{
-			i += 1;
-			continue;
-		}
-		if (a == "--quiet" || a == "--debug" || a == "--no-color")
-		{
-			i += 1;
-			continue;
-		}
-		break;
-	}
-	if (i >= args.len) return -1;
 	foreach (cmd : COMMANDS)
 	{
-		if (args[i] == cmd) return (sz)i;
+		if (arg == cmd) return true;
 	}
-	return -1;
+	return false;
 }
 
 // llmcli traj list [--children] / show <name> [--full] / tail <name> [n] / search <name> <pattern>
+// args 是命令名之后的参数（verb 在 args[0]）。
 fn int run_traj(String[] args)
 {
-	if (args.len < 2 || args[1] == "list")
+	if (!args.len || args[0] == "list")
 	{
 		bool children = false;
-		for (usz i = 1; i < args.len; i++)
-		{
-			if (args[i] == "--children") children = true;
-		}
+		foreach (a : args) { if (a == "--children") children = true; }
 		if (children) return list_children();
 		return list_trajectories();
 	}
-	String verb = args[1];
+	String verb = args[0];
 	bool full = false;
-	foreach (a : args)
+	foreach (a : args) { if (a == "--full") full = true; }
+	if (verb == "show" && args.len >= 2)
 	{
-		if (a == "--full") full = true;
-	}
-	if (verb == "show" && args.len >= 3)
-	{
-		trajectory::Trajectory traj = trajectory::open_resume(args[2]);
+		trajectory::Trajectory traj = trajectory::open_resume(args[1]);
 		traj_print_steps(trajectory::read_all(mem, &traj), full);
 		return cli::EXIT_OK;
 	}
-	if (verb == "tail" && args.len >= 3)
+	if (verb == "tail" && args.len >= 2)
 	{
-		int n = args.len >= 4 ? (args[3].to_int() ?? 10) : 10;
-		trajectory::Trajectory traj = trajectory::open_resume(args[2]);
+		int n = args.len >= 3 ? (args[2].to_int() ?? 10) : 10;
+		trajectory::Trajectory traj = trajectory::open_resume(args[1]);
 		traj_print_steps(trajectory::tail(mem, &traj, n), full);
 		return cli::EXIT_OK;
 	}
-	if (verb == "search" && args.len >= 4)
+	if (verb == "search" && args.len >= 3)
 	{
-		trajectory::Trajectory traj = trajectory::open_resume(args[2]);
-		traj_print_steps(trajectory::search(mem, &traj, args[3]), full);
+		trajectory::Trajectory traj = trajectory::open_resume(args[1]);
+		traj_print_steps(trajectory::search(mem, &traj, args[2]), full);
 		return cli::EXIT_OK;
 	}
 	log::error("traj 用法：traj list [--children]|show <name> [--full]|tail <name> [n]|search <name> <pattern>");
@@ -206,9 +175,10 @@ fn String io_truncate(String text) @private
 }
 
 // llmcli context [--traj <name>]：打印渲染出的 messages（默认最近一条轨迹）。
+// args 是命令名之后的参数。
 fn int run_context(String[] args)
 {
-	for (usz i = 1; i < args.len; i++)
+	for (usz i = 0; i < args.len; i++)
 	{
 		if (args[i] == "--traj" && i + 1 < args.len) return run_context_for(args[i + 1]);
 	}
@@ -236,51 +206,17 @@ fn int run_context_for(String name) @private
 
 fn int main(String[] args)
 {
-	configure_dirs(args);
-	// 只有 traj/context/skills 是子命令（第一个非全局-flag 参数命中时派发）；其余都是一次运行。
-	sz ci = command_index(args);
-	if (ci >= 0)
+	// 命令名必须是第一个参数：`llmcli traj list`。命中则派发，其余都是一次运行
+	// （生成代码起子 run 就是 `llmcli "<task>"`）。
+	if (args.len >= 2 && is_command(args[1]))
 	{
-		String cmd = args[ci];
-		String[] tail = after(args, (usz)ci);
-		if (cmd == "traj") return run_traj(sub_args(tail));
-		if (cmd == "context") return run_context(sub_args(tail));
-		if (cmd == "skills") return list_skills();
+		String cmd = args[1];
+		// 子命令也认 --traj-dir / --config-dir（CLI flag 知识集中在 cli.c3）；这两个 flag
+		// 及值从子命令参数里摘掉，剩下的才是 verb 与位置参数。
+		String[] tail = cli::configure_trajectory(args[2..]);
+		if (cmd == "traj") return run_traj(tail);
+		if (cmd == "context") return run_context(tail);
+		return list_skills();
 	}
-	// 一次普通运行。生成代码起子 run 就是再跑一次 llmcli：`llmcli "<task>"`。
 	return run_entry(args);
-}
-
-// args[index+1..]（命令名之后的 token）
-fn String[] after(String[] args, usz index) @private
-{
-	List{String} out;
-	out.init(mem);
-	for (usz i = index + 1; i < args.len; i++) out.push(args[i]);
-	return out.to_array(mem);
-}
-
-// 给 run_traj/run_context 用：它们从 args[1] 起读 verb，这里补一个占位元素。
-fn String[] sub_args(String[] tail) @private
-{
-	List{String} out;
-	out.init(mem);
-	out.push("llmcli");
-	foreach (t : tail) out.push(t);
-	return out.to_array(mem);
-}
-
-// 子命令也要认 --traj-dir / --config-dir：在派发前扫一遍 argv 配置轨迹根。
-fn void configure_dirs(String[] args) @private
-{
-	String traj_dir = "";
-	String config_dir = "";
-	for (usz i = 1; i < args.len; i++)
-	{
-		if (args[i] == "--traj-dir" && i + 1 < args.len) traj_dir = args[i + 1];
-		if (args[i] == "--config-dir" && i + 1 < args.len) config_dir = args[i + 1];
-		if (args[i].starts_with("--traj-dir=")) traj_dir = args[i][11..];
-		if (args[i].starts_with("--config-dir=")) config_dir = args[i][13..];
-	}
-	if (traj_dir.len || config_dir.len) trajectory::configure(traj_dir, config_dir);
 }

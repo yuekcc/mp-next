@@ -387,3 +387,45 @@ fn void test_resolve_keeps_every_parsed_field() @test
 	test::eq(resolved.ctx.user_input, "问题");
 	free(resolved.ctx.system_prompt.ptr);
 }
+
+// ---- configure_trajectory：子命令共用的目录 flag 扫描（唯一一处） ----
+
+// 两个形态（空格 / 等号）都认，并从返回的子命令参数里摘掉 flag 及值
+fn void test_configure_trajectory_strips_flags() @test
+{
+	@pool()
+	{
+		String[] rest = cli::configure_trajectory({ "list", "--traj-dir", "build/x", "--children" });
+		test::eq((int)rest.len, 2);
+		test::eq(rest[0], "list");
+		test::eq(rest[1], "--children");
+	};
+	@pool()
+	{
+		String[] rest = cli::configure_trajectory({ "show", "abc", "--traj-dir=build/y" });
+		test::eq((int)rest.len, 2);
+		test::eq(rest[0], "show");
+		test::eq(rest[1], "abc");
+	};
+}
+
+// 没有目录 flag 时原样返回
+fn void test_configure_trajectory_passthrough() @test
+{
+	@pool()
+	{
+		String[] rest = cli::configure_trajectory({ "search", "abc", "needle" });
+		test::eq((int)rest.len, 3);
+	};
+}
+
+// --config-dir 也认，且不影响其余参数
+fn void test_configure_trajectory_config_dir() @test
+{
+	@pool()
+	{
+		String[] rest = cli::configure_trajectory({ "--config-dir", "build/cfg", "list" });
+		test::eq((int)rest.len, 1);
+		test::eq(rest[0], "list");
+	};
+}

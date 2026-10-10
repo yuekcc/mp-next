@@ -19,6 +19,10 @@ const int EXIT_UNCONVERGED = 3;  // 循环未收敛
 
 const String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
 
+// 轨迹目录 flag 名：parse 与 configure_trajectory 共用，避免两处各写一遍字面量而漂移。
+const String FLAG_TRAJ_DIR = "--traj-dir";
+const String FLAG_CONFIG_DIR = "--config-dir";
+
 const String USAGE = `用法：llmcli --model <id> --api-key <key> [flags] [<prompt>]`;
 
 // ---- 类型 ----
@@ -224,8 +228,8 @@ fn ParseResult parse(String[] args)
 		if (name == "--api-url") slot = &o.api_url;
 		if (name == "--model") slot = &o.model;
 		if (name == "--traj") slot = &o.traj_id;
-		if (name == "--traj-dir") slot = &o.traj_dir;
-		if (name == "--config-dir") slot = &o.config_dir;
+		if (name == FLAG_TRAJ_DIR) slot = &o.traj_dir;
+		if (name == FLAG_CONFIG_DIR) slot = &o.config_dir;
 		if (name == "--workdir") slot = &o.workdir;
 		if (name == "--system-prompt") slot = &o.system_prompt;
 		if (name == "--system-prompt-file") slot = &o.system_prompt_file;
@@ -295,6 +299,51 @@ fn bool take_value(String[] args, usz* i, String flag, String inline_value,
 	*i += 1;
 	*out = args[*i];
 	return true;
+}
+
+// 在 argv 里找 --traj-dir / --config-dir 并配置轨迹根，返回去掉这两个 flag（及其值）后的
+// 参数列表。命令群（traj/context）没有完整 Ctx，但也要认这两个 flag；这是**唯一**一处扫
+// 这两个 flag 的地方，flag 知识不再散落到 cmd 层。
+// 认 `--flag value` 与 `--flag=value` 两种形态。
+fn String[] configure_trajectory(String[] args)
+{
+	String traj_dir = "";
+	String config_dir = "";
+	List{String} rest;
+	rest.init(tmem);
+	for (usz i = 0; i < args.len; i++)
+	{
+		String a = args[i];
+		if (a == FLAG_TRAJ_DIR || a == FLAG_CONFIG_DIR)
+		{
+			if (i + 1 < args.len)
+			{
+				if (a == FLAG_TRAJ_DIR)
+				{
+					traj_dir = args[i + 1];
+				}
+				else
+				{
+					config_dir = args[i + 1];
+				}
+				i++;
+			}
+			continue;
+		}
+		if (a.starts_with(FLAG_TRAJ_DIR +++ "="))
+		{
+			traj_dir = a[11..];
+			continue;
+		}
+		if (a.starts_with(FLAG_CONFIG_DIR +++ "="))
+		{
+			config_dir = a[13..];
+			continue;
+		}
+		rest.push(a);
+	}
+	if (traj_dir.len || config_dir.len) trajectory::configure(traj_dir, config_dir);
+	return rest.to_array(tmem);
 }
 
 // ---- 补齐运行输入（有 I/O） ----
@@ -474,14 +523,13 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   --no-color               关闭 stderr 颜色
   -h, --help               打印本帮助
 
-子命令（第一个非全局-flag 参数即命令名）：
+子命令（命令名必须是第一个参数；子命令自身只认 --traj-dir / --config-dir）：
   llmcli traj list [--children]   列出轨迹；--children 额外标注 fork/merge 子关系
   llmcli traj show <name> [--full] 打印某条轨迹的全部步骤（--full 不截断正文）
   llmcli traj tail <name> [n]     打印末尾 n 步
   llmcli traj search <name> <pat> 按子串搜索步骤
   llmcli context [--traj <name>]  打印渲染出的 messages
   llmcli skills             列出本机可用 skill
-  全局 flag（--traj-dir / --quiet / --debug / --no-color）可放在命令名之前。
 
 子 run：生成代码里再调用一次本二进制就是子 run，直接给任务即可（父轨迹会记 fork/merge）：
 
