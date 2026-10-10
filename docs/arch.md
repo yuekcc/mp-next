@@ -123,12 +123,11 @@ graph TD
 
 `main`（`cmd/llmcli.c3`）的编排顺序：
 
-1. `configure_dirs(args)`——扫出 `--traj-dir` / `--config-dir` 配置轨迹根（子命令也要认）。
-2. `command_index(args)`——第一个命令名参数走子命令派发（`shellm`/`run`/`traj`/`context`/`skills`），
-   否则走一次真实运行。
+1. `configure_dirs(args)`——扫出 `--traj-dir` 配置轨迹根（子命令也要认）。
+2. `command_index(args)`——第一个非全局-flag 参数命中命令名时走子命令派发（`traj`/`context`/`skills`），
+   否则走一次真实运行。子 run 就是生成代码再跑一次 `llmcli "<task>"`。
 3. 真实运行 `run_entry`：`cli::resolve(args)` → `trajectory::configure` → `log::init` /
-   `log::add_secret` → 动作短路（`--help` / 用法错误 / `--list-sessions` / `--list-skills` /
-   `--print-system-prompt`）→ `runtime::install_interrupt_handler()` → `http::http_init()` →
+   `log::add_secret` → 动作短路（`--help` / 用法错误 / `--print-system-prompt`）→ `runtime::install_interrupt_handler()` → `http::http_init()` →
    `agent::run(&ctx)`。
 
 ### 3.2 RLM 循环状态机
@@ -184,7 +183,7 @@ stateDiagram-v2
 
 | 分节 | 语义 | 代表字段 |
 |------|------|----------|
-| 初始设置 | 本次运行的固定前提，运行期间不变 | `api_key`, `api_url`, `model`, `config_dir`, `effort` |
+| 初始设置 | 本次运行的固定前提，运行期间不变 | `api_key`, `api_url`, `model` |
 | 本次运行边界 | 约束这一次 run 的范围 | `traj_id`, `resume`, `workdir`, `vars`, `max_iterations`, `context_scope`, `max_bytes`, `inactivity_timeout`, `max_output_size`, `max_exec_time`, `system_prompt`, `user_input` |
 | 解析中间量 | 只在 parse/resolve 用，agent 一次都不读 | `system_prompt_file`, `input_file`, `prompt`, `traj_dir` |
 | 日志开关 | 只影响 stderr，与请求/落盘无关 | `quiet`, `debug`, `no_color` |
@@ -194,7 +193,7 @@ stateDiagram-v2
 
 - `parse(args, stdin_ok=true) -> ParseResult`：**纯解析，零 I/O**。只看 argv，不读 stdin、不读文件。
   所有与输入来源冲突、缺失、互斥、`traj` 目录名合法性相关的用法错误都在这里报出。动作开关
-  （`--help` / `--list-sessions` / `--list-skills` / `--print-system-prompt`）在这里就短路返回，
+  （`--help` / `--print-system-prompt`）在这里就短路返回，
   **必须在碰 stdin 之前结束**，否则 `llmcli --help` 在终端里会阻塞等输入。子 run 传
   `stdin_ok=false`：它的 stdin 已被父进程接 `/dev/null`，不再算一个输入来源。
 - `resolve(args, stdin_ok=true)`：调 `parse` 后补齐运行输入。**唯一的 I/O 发生处**：读
@@ -320,7 +319,7 @@ stateDiagram-v2
   按顺序加载，**项目级后加载覆盖全局级同名技能**。
 - `name` / `description` / 正文三者非空才算有效 skill；按 name 升序排序（插入排序，数量小）。
 - 两种产出：`print_installed`（拼进系统提示词的 `<available_skills>` 块，name/description/location
-  均做 XML 转义，路径统一成正斜杠）与 `print_brief`（`--list-skills` 的人读简表）。
+  均做 XML 转义，路径统一成正斜杠）与 `print_brief`（`skills` 子命令的人读简表）。
 - 无 skill 时 `print_installed` 返回空串，系统提示词不留任何噪音。
 - llmcli 里 bash 是唯一工具，所以注入文本让模型用 bash 读 `SKILL.md`，而不是内置 ReadFile 工具。
 
@@ -365,7 +364,7 @@ header list 的生命周期需覆盖 `perform`；body 用 `COPYPOSTFIELDS` 让 l
 - **三看门狗**：空闲 / 输出量 / 墙钟；看门狗跑独立线程，**只用原子量，不能用 `tmem`**（线程本地）。
 - **输出合并 stdout+stderr，剥离 xtrace 行，超 2000 行截断为末 2000 行**，完整输出落临时文件并给出路径。
 - **每个步骤产生即 append**（整步一次 write）：中断/报错后文件末尾永远是完整步骤。
-- **轨迹根目录只由命令行决定**（`--traj-dir` / `--config-dir`），不读任何环境变量。
+- **轨迹根目录只由命令行决定**（`--traj-dir`），不读任何环境变量。
 
 ### 5.3 内存模型
 

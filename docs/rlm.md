@@ -205,7 +205,7 @@ fn Message[] render(Context*, Trajectory*, RenderPolicy*)
 ```
 struct Response { String text; String reasoning; String usage; String finish_reason; bool ok; String error; }
 
-struct Llm { String api_url; String api_key; String model; String effort; int max_tokens; }
+struct Llm { String api_url; String api_key; String model; int max_tokens; }
 fn Response Llm.call(Llm*, String system_prompt, Message[] messages)
 ```
 
@@ -338,22 +338,22 @@ thinking 作为 `assistant` 上下文回填 + 一句「继续」的 `user` 提�
 
 ## 7. 子命令与子 run（单二进制）
 
-生成代码要自省与递归时，调用的是**同一个二进制**。`cmd` 层按第一个参数派发到「命令名」：
+生成代码要自省与递归时，调用的是**同一个二进制**。命令名是第一个非全局-flag 参数：
 
 ```
-llmcli shellm  "<task>"            # 起一个子 run（等价 bin/shellm）
+llmcli "<task>"                    # 起一个子 run（就是再跑一次 llmcli）
 llmcli traj    show <id> --full    # 等价 bin/traj
-llmcli traj    list --children all
-llmcli context --tail 100          # 等价 bin/context
+llmcli traj    list --children
+llmcli context --traj <id>         # 等价 bin/context
 llmcli skills                      # 等价 bin/skills
-llmcli view / glob / put           # 可选文件工具
 ```
 
-- **宿主部署**：把这些名字软链/别名到同一二进制即可（`argv[0]` 派发），部署上仍是**一个文件**。
-- **子 run**：`llmcli shellm "..."` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
-  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子 run 进度。
+- **宿主部署**：就是一个文件，无需软链/别名或 argv[0] 派发。
+- **子 run**：`llmcli "<task>"` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
+  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子 run 进度。子 run 的 stdin 被父进程
+  接 `/dev/null`，显式位置参数存在时不再被当输入来源（见 4.4 与 §9 输入判定）。
 - **递归语义**：循环本身**不自调用**（任何一轮都只是 `Llm.call`）；递归只来自生成代码**显式**起
-  子 run。这与我们此前的调用逻辑核对一致。
+  子 run。
 
 ---
 
@@ -374,7 +374,7 @@ llmcli view / glob / put           # 可选文件工具
 {"step_id":"1f3a...","ts":"2026-10-10T12:00:00+08:00","type":"reasoning","run_id":"1f3a...","thought":"先看一下。","cmd":"ls -la"}
 ```
 
-- `--config-dir` / `--traj-dir` 决定存放位置，**只由命令行决定，不读环境变量**（沿用现有约定）。
+- `--traj-dir` / `--config-dir` 决定存放位置，**只由命令行决定，不读环境变量**（沿用现有约定）。
 - 旧 `.llmcli/sessions/*.jsonl` 读取时做一次性映射（见 4.1）。
 
 ---
@@ -385,14 +385,13 @@ llmcli view / glob / put           # 可选文件工具
 
 | Flag | 作用 |
 |------|------|
-| `--max-iterations N` | 循环上限（现有 `--max-turns` 的更名/别名；0 或不给=不限） |
+| `--max-iterations N` | 循环上限（0 或不给=不限） |
 | `--traj <id>` / `--resume` | 写入/续接既有轨迹 |
 | `--context-scope traj\|run` | 渲染范围（默认 traj） |
-| `--traj-dir DIR` | 轨迹目录 |
-| `--workdir DIR` / `--here` | 生成代码的工作目录 |
+| `--traj-dir DIR` | 轨迹目录（默认 `<config-dir>/traj`） |
+| `--workdir DIR` | 生成代码的工作目录 |
 | `--system-prompt[-file]` | 已有 |
 | `--var NAME[=VALUE]` | 传入生成代码的环境变量（可重复） |
-| `--effort LEVEL` | 思考强度（OpenAI 兼容侧透传/可忽略） |
 | `--inactivity-timeout` / `--max-output-size` / `--max-exec-time` | 看门狗阈值 |
 | `--max-bytes` | context 渲染预算 |
 
@@ -407,10 +406,10 @@ llmcli view / glob / put           # 可选文件工具
 | 维度 | 迁移前 | 现状（shellm 等价） |
 |------|-------------|----------------------|
 | messages 来源 | 进程内 `List{Message}` 累加 | `Context` 每轮从 trajectory 重渲染 |
-| 持久化 | `--session-id` 可选旁路落盘 | trajectory 是唯一真相源，始终落盘 |
+| 持久化 | `--traj` 可选旁路落盘 | trajectory 是唯一真相源，始终落盘 |
 | 生成代码 | Python | bash |
 | 完成信号 | `FINAL`/`FINAL_FILE` | 同 |
-| 循环止损 | `--max-turns` | max-iterations + 空闲/输出量/墙钟三看门狗 + stall guard |
+| 循环止损 | `--max-iterations` | max-iterations + 空闲/输出量/墙钟三看门狗 + stall guard |
 | 递归 | 无 | 显式子 run + fork/merge |
 | 自省 | 无 | `traj`/`context` 子命令 |
 | 工具形态 | 单二进制 | 单二进制（命令群靠自派发，仍是一个文件） |

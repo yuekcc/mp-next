@@ -25,21 +25,29 @@ cat x.md | llmcli --model gpt-4o-mini --api-key $KEY
 llmcli --model gpt-4o-mini --api-key $KEY --traj work "把 src/cli.c3 里的拼写错误修掉"
 ```
 
-输入来源（位置参数 / stdin / `--input-file`）严格三选一；完整参数、退出码与示例见 `llmcli --help`。
+输入来源为位置参数 / `--input-file` 二选一（不能同时给）；两者都不给且 stdin 是管道时读管道。完整参数、退出码与示例见 `llmcli --help`。
 
-## 子命令（单二进制派发）
+## 子命令
 
 ```bash
-llmcli shellm "<task>"          # 起一个子 run（父轨迹记 fork/merge）
 llmcli traj list                # 列出轨迹
 llmcli traj show <name>         # 打印某条轨迹的步骤
 llmcli traj tail <name> [n]     # 末尾 n 步
 llmcli traj search <name> <pat> # 按子串搜索
 llmcli context [--traj <name>]  # 打印渲染出的 messages
-llmcli skills                   # 等价 --list-skills
+llmcli skills                   # 列出本机可用 skill
 ```
 
-把这些名字软链/别名到同一二进制即可（`argv[0]` 派发），部署上仍是一个文件。
+命令名是第一个非全局-flag 参数，无需软链/别名。
+
+## 子 run
+
+生成代码里再调用一次本二进制就是子 run，直接给任务即可（父轨迹会记 `fork`/`merge`）：
+
+```bash
+llmcli "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
+  --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
+```
 
 ## 测试
 

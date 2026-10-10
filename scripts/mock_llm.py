@@ -30,7 +30,7 @@ content 里的 {{PLACEHOLDER}} 可用 --replace k=v 替换。
     no_answer     返回 finish_reason=stop 但 content 为空
     slow_command  一个长时间不退出的代码块（用 {{SLEEP}} 填充 subprocess 命令）
     two_code_calls 同一 Trace 内两轮代码块（用 {{SESSION}} 观察中途落盘）
-    always_blocks 永远返回不带 FINAL 的代码块（用来验证 --max-turns 止损）
+    always_blocks 永远返回不带 FINAL 的代码块（用来验证 --max-iterations 止损）
 """
 
 import argparse
@@ -113,11 +113,11 @@ SCENARIOS = {
         {"finish_reason": "stop", "content": "```bash\nsleep 600\n```"},
         {"finish_reason": "stop", "content": "done idle"},
     ],
-    # 子 run：生成代码显式调同一二进制起子 run。
-    # {{LLMCLI}}/{{APIKEY}}/{{APIURL}}/{{TRAJDIR}}/{{TRAJID}} 由回归替换。
+    # 子 run：生成代码显式再跑一次 llmcli（`llmcli "<task>"`）。
+    # {{LLMCLI}}/{{APIKEY}}/{{APIURL}}/{{TRAJDIR}} 由回归替换。
     "sub_run": [
         {"finish_reason": "stop",
-         "content": "起一个子 run。\n```bash\n'{{LLMCLI}}' shellm \"子任务\" --model any --api-key '{{APIKEY}}' --api-url '{{APIURL}}' --traj-dir '{{TRAJDIR}}' > /dev/null 2>&1\nFINAL=\"parent done\"\n```"},
+         "content": "起一个子 run。\n```bash\n'{{LLMCLI}}' \"子任务\" --model any --api-key '{{APIKEY}}' --api-url '{{APIURL}}' --traj-dir '{{TRAJDIR}}' > /dev/null 2>&1\nFINAL=\"parent done\"\n```"},
     ],
 }
 

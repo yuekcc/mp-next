@@ -34,12 +34,11 @@ struct Ctx
 	String api_url;      // 端点，默认 DEFAULT_API_URL
 	String model;        // 模型 id，原样进请求体
 	String config_dir;   // 配置根目录（轨迹落盘位置）；空 = 用默认 ~/.llmcli
-	String effort;       // 思考强度（OpenAI 兼容侧透传/可忽略）
 
 	// --- 本次运行边界：约束这一次 Trace 的范围，运行期间同样不变 ---
 	String traj_id;         // 非空 = 续接/写入该轨迹目录名（--traj）；空 = 新建
 	bool resume;            // --resume：续接既有轨迹（配合 --traj 指定 id，缺省续最近的）
-	String workdir;         // 生成代码的工作目录（--workdir / --here）；空 = 继承当前目录
+	String workdir;         // 生成代码的工作目录（--workdir）；空 = 继承当前目录
 	String[] vars;          // 传入生成代码的环境变量（--var NAME=VALUE，可重复）
 	String system_prompt;   // 已展开占位符；空 = 用一个空的 system 消息（resolve 会回填默认提示词）
 	String user_input;      // 本次要问的内容（mem 堆串，调用方负责释放）
@@ -64,8 +63,6 @@ struct Ctx
 	bool no_color;     // 关闭 stderr 颜色
 
 	// --- 动作开关：不改运行配置，只决定 main 走哪条路（然后立刻返回） ---
-	bool list_trajectories;
-	bool list_skills;
 	bool print_system_prompt;
 	bool help;
 }
@@ -79,9 +76,9 @@ struct ParseResult
 // ---- 纯解析（无 I/O） ----
 
 // 纯解析：只看 argv，不读 stdin、不读任何文件。
-// --help / --list-sessions 在这里就短路返回——它们必须在碰 stdin 之前结束，
+// --help 在这里就短路返回——它必须在碰 stdin 之前结束，
 // 否则 `llmcli --help` 在终端里会阻塞等输入。
-fn ParseResult parse(String[] args, bool stdin_ok = true)
+fn ParseResult parse(String[] args)
 {
 	ParseResult res;
 	Ctx* o = &res.ctx;
@@ -128,16 +125,10 @@ fn ParseResult parse(String[] args, bool stdin_ok = true)
 		if (name == "--quiet") { o.quiet = true; i++; continue; }
 		if (name == "--debug") { o.debug = true; i++; continue; }
 		if (name == "--no-color") { o.no_color = true; i++; continue; }
-		if (name == "--list-sessions" || name == "--list-trajectories")
-		{
-			o.list_trajectories = true; i++; continue;
-		}
-		if (name == "--list-skills") { o.list_skills = true; i++; continue; }
 		if (name == "--print-system-prompt") { o.print_system_prompt = true; i++; continue; }
 		if (name == "--resume") { o.resume = true; i++; continue; }
-		if (name == "--here") { o.workdir = "."; i++; continue; }
 
-		if (name == "--max-iterations" || name == "--max-turns")
+		if (name == "--max-iterations")
 		{
 			String value;
 			if (!take_value(args, &i, name, inline_value, has_inline, &value, &res.error)) return res;
@@ -232,14 +223,13 @@ fn ParseResult parse(String[] args, bool stdin_ok = true)
 		if (name == "--api-key") slot = &o.api_key;
 		if (name == "--api-url") slot = &o.api_url;
 		if (name == "--model") slot = &o.model;
-		if (name == "--traj" || name == "--session-id") slot = &o.traj_id;
+		if (name == "--traj") slot = &o.traj_id;
 		if (name == "--traj-dir") slot = &o.traj_dir;
+		if (name == "--config-dir") slot = &o.config_dir;
 		if (name == "--workdir") slot = &o.workdir;
-		if (name == "--effort") slot = &o.effort;
 		if (name == "--system-prompt") slot = &o.system_prompt;
 		if (name == "--system-prompt-file") slot = &o.system_prompt_file;
 		if (name == "--input-file") slot = &o.input_file;
-		if (name == "--config-dir") slot = &o.config_dir;
 
 		if (!slot)
 		{
@@ -258,15 +248,8 @@ fn ParseResult parse(String[] args, bool stdin_ok = true)
 		return res;
 	}
 
-	// --print-system-prompt 也是"看完即走"的动作，与其它动作开关互斥，避免行为歧义
-	if (o.print_system_prompt && (o.help || o.list_trajectories || o.list_skills))
-	{
-		res.error = "--print-system-prompt 不能与 --help / --list-sessions / --list-skills 同用";
-		return res;
-	}
-
-	// --help / --list-sessions / --list-skills / --print-system-prompt 不需要 api-key、model 与输入
-	if (o.help || o.list_trajectories || o.list_skills || o.print_system_prompt) return res;
+	// --help / --print-system-prompt 不需要 api-key、model 与输入
+	if (o.help || o.print_system_prompt) return res;
 
 	// traj-id 会直接当目录名用，在读任何输入之前先挡住路径穿越与非法字符
 	if (o.traj_id.len && !trajectory::valid_id(o.traj_id))
@@ -275,23 +258,19 @@ fn ParseResult parse(String[] args, bool stdin_ok = true)
 		return res;
 	}
 
-	// 输入三选一在纯解析里就查：冲突/缺失都是用法错误，不该先去读 stdin 或敲文件。
-	// 只有 stdin 这一路要碰 stdin（isatty 只是问一句，不读内容）。
-	// stdin_ok=false（子 run：标准输入已被父进程占用/接 /dev/null）时不把管道算作来源。
-	bool stdin_pipe = stdin_ok && !io::stdin().isatty();
-	String sources = "";
-	if (o.prompt.len) sources = "位置参数";
-	if (o.input_file.len) sources = sources.len ? sources.tconcat(" + --input-file") : "--input-file";
-	if (stdin_pipe) sources = sources.len ? sources.tconcat(" + stdin 管道") : "stdin 管道";
-
-	usz source_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0) + (stdin_pipe ? 1 : 0));
-	if (source_count > 1)
+	// 输入来源判定：
+	//   1) 显式来源（位置参数 / --input-file）优先；同时给两个才是用法错误。
+	//   2) 两者都没给时，stdin 是管道则用管道内容（isatty 只问一句，不读内容）。
+	//   3) 两者都没给、stdin 也不是管道 → 缺输入。
+	// 显式来源存在时不看 stdin：这样生成代码起子 run 用的 `llmcli "<task>"`（其 stdin 被父进程
+	// 接 /dev/null、非 tty）不会被误判成"位置参数 + stdin 管道"冲突。
+	usz explicit_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0));
+	if (explicit_count > 1)
 	{
-		res.error = string::tformat("输入必须三选一（位置参数 / stdin 管道 / --input-file），"
-		                            "当前同时给了：%s", sources);
+		res.error = "输入必须二选一（位置参数 / --input-file），不能同时给";
 		return res;
 	}
-	if (source_count == 0)
+	if (explicit_count == 0 && io::stdin().isatty())
 	{
 		res.error = "缺少输入：请用位置参数、stdin 管道或 --input-file 提供 prompt";
 		return res;
@@ -322,11 +301,11 @@ fn bool take_value(String[] args, usz* i, String flag, String inline_value,
 
 // parse + 补齐运行所需的一切：系统提示词与用户输入也在这里读取。
 // 注意有 I/O 副作用：stdin 是管道时会阻塞到 EOF，--input-file / --system-prompt-file 会读文件。
-fn ParseResult resolve(String[] args, bool stdin_ok = true)
+fn ParseResult resolve(String[] args)
 {
-	ParseResult res = parse(args, stdin_ok);
+	ParseResult res = parse(args);
 	Ctx* o = &res.ctx;
-	if (res.error.len || o.help || o.list_trajectories || o.list_skills) return res;
+	if (res.error.len || o.help) return res;
 	if (o.system_prompt_file.len)
 	{
 		// 读进来后统一走 expand_prompt_placeholders 复制到 mem，这里用 tmem 不留中间缓冲
@@ -461,10 +440,10 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 输出作为下一条 user 消息回填，循环直到代码里设置 FINAL / FINAL_FILE——bash 是唯一的工具。
 trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
 
-输入（三选一，不能同时给）：
+输入（位置参数与 --input-file 二选一；都不给时读 stdin 管道）：
   <prompt>                 位置参数，直接写在命令行上
-  stdin                    管道输入，如 cat x.md | llmcli ...
   --input-file <file>      从文件读取（UTF-8）
+  stdin                    管道输入，如 cat x.md | llmcli ...（未给上面两者时才用）
 
 必备参数：
   --api-key <key>          API 密钥；不读环境变量兜底，缺失即用法错误
@@ -475,15 +454,13 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   --traj <id>              续接/写入既有轨迹目录；不给则新建
   --resume                 续接既有轨迹（配合 --traj）
   --traj-dir <dir>         轨迹根目录；默认 <config-dir>/traj（再默认 ~/.llmcli/traj）
-  --config-dir <dir>       配置目录根；默认 %USERPROFILE%\.llmcli（Linux/macOS: ~/.llmcli）；
+  --config-dir <dir>       配置目录根；只影响轨迹落盘位置，默认 ~/.llmcli
                            不读任何环境变量
   --max-iterations <n>     最多发起 n 次请求（n>0 生效）；不给或 <=0 表示不设上限
-                           （--max-turns 是它的别名）
   --context-scope <s>      渲染范围 traj | run（默认 traj）
   --max-bytes <n>          context 渲染预算（字节）；0 = 不限
-  --workdir <dir>          生成代码的工作目录（--here 等价于 --workdir .）
+  --workdir <dir>          生成代码的工作目录
   --var NAME=VALUE         传入生成代码的环境变量（可重复）
-  --effort <level>         思考强度（OpenAI 兼容侧透传/可忽略）
   --inactivity-timeout <s> 看门狗：无输出超过 s 秒即杀（默认 120；<=0 关闭）
   --max-output-size <n>    看门狗：累计输出超过 n 字节即杀（默认 10485760）
   --max-exec-time <s>      看门狗：墙钟超过 s 秒即杀（默认 1800；<=0 关闭）
@@ -491,25 +468,25 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   --system-prompt-file <f> 系统提示词文件
                            两者都不给时用内置默认提示词（src/system_prompt.md）；
                            三种来源都支持 {{date}} / {{cwd}} / {{os}} 占位符
-  --list-sessions          列出已有轨迹（目录名、更新时间、步数），随后退出
-                           （--list-trajectories 是它的别名）
-  --list-skills            列出本机可用 skill（~/.agents/skills 与 ./.agents/skills），随后退出
   --print-system-prompt    打印本次实际会发给端点的系统提示词（含已注入的 skill 列表），随后退出
   --quiet                  stderr 只保留错误
   --debug                  stderr 额外打印原始请求/响应（密钥已脱敏）
   --no-color               关闭 stderr 颜色
   -h, --help               打印本帮助
 
-子命令：
-  llmcli shellm "<task>"   起一个子 run（等价 bin/shellm）；父轨迹记 fork/merge
+子命令（第一个非全局-flag 参数即命令名）：
   llmcli traj list [--children]   列出轨迹；--children 额外标注 fork/merge 子关系
   llmcli traj show <name> [--full] 打印某条轨迹的全部步骤（--full 不截断正文）
   llmcli traj tail <name> [n]     打印末尾 n 步
   llmcli traj search <name> <pat> 按子串搜索步骤
   llmcli context [--traj <name>]  打印渲染出的 messages
-  llmcli skills             等价 --list-skills
-  全局 flag（--traj-dir / --config-dir / --quiet / --debug / --no-color）可放在命令名之前。
-  把命令名软链/别名到同一二进制即可（argv[0] 派发）；部署上仍是一个文件。
+  llmcli skills             列出本机可用 skill
+  全局 flag（--traj-dir / --quiet / --debug / --no-color）可放在命令名之前。
+
+子 run：生成代码里再调用一次本二进制就是子 run，直接给任务即可（父轨迹会记 fork/merge）：
+
+  llmcli "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
+    --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
 
 退出码：
   0  成功
@@ -524,17 +501,19 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   llmcli --model gpt-4o-mini --api-key $KEY --system-prompt-file sys.md \
          --input-file article.md --traj work
 
-注意：位置参数 / stdin 管道 / --input-file 严格三选一。stdin 是管道时不能再写位置参数
-      （cat x.md 接管道再写 "总结一下" 会报用法错误）。要让模型既看内容又听指令，请把指令
-      写进 --system-prompt / --system-prompt-file，内容走 stdin 或 --input-file。
+注意：输入来源为位置参数 / --input-file 二选一（不能同时给）。两者都不给时若 stdin 是管道，
+      则读管道内容；否则报"缺少输入"。显式给了位置参数或 --input-file 时忽略 stdin——
+      这正是生成代码写 llmcli "<子任务>"（stdin 被父进程接 /dev/null）能直接工作的原因。
+      要让模型既看内容又听指令，请把指令写进 --system-prompt / --system-prompt-file，内容走
+      stdin 或 --input-file。
 
 系统提示词还会自动追加本机可用 skill 列表（发现于 ~/.agents/skills 与
   ./.agents/skills 下各 <name>/SKILL.md），模型可据此用 bash 读取并照其执行。
-  用 --list-skills 查看当前发现了哪些。
+  用 llmcli skills 查看当前发现了哪些。
 
 轨迹存储：
   默认 <根目录>/<hex8>-<slug>/trajectory.jsonl（首步 UUID 前 8 位 + 输入 slug），
-  根目录 = --traj-dir，或 <--config-dir>/traj，或 ~/.llmcli/traj；环境变量不参与决定位置。
+  根目录 = --traj-dir，或 ~/.llmcli/traj；环境变量不参与决定位置。
   每行一个 Step（JSON），append 原子：中断或报错时文件末尾永远是完整步骤。
   大字段（超 8 KiB）spill 到同目录 blobs/。v1 不提供清理功能，请自行删除目录。
   落盘内容可能含敏感信息，注意存放位置。

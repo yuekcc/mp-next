@@ -7,10 +7,10 @@ llmcli 会自动发现本机技能，把可用列表追加进系统提示词，�
 - 项目：`<当前目录>/.agents/skills/<name>/SKILL.md`
 
 每个 `SKILL.md` 以 front matter 给出 `name` 与 `description`，其后为技能正文；三者齐全才算
-一个有效 skill。用 `--list-skills` 查看当前发现的结果：
+一个有效 skill。用 `llmcli skills` 查看当前发现的结果：
 
 ```bash
-llmcli --list-skills
+llmcli skills
 ```
 
 想看某次运行实际会发给端点的系统提示词（含已注入的 skill 列表），用：

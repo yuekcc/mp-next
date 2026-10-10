@@ -61,7 +61,6 @@ fn int run(cli::Ctx* ctx)
 		.api_url = ctx.api_url,
 		.api_key = ctx.api_key,
 		.model = ctx.model,
-		.effort = ctx.effort,
 	};
 
 	st.traj = open_trajectory(ctx);
@@ -95,7 +94,7 @@ fn int run(cli::Ctx* ctx)
 	});
 
 	// 把轨迹坐标作为环境变量暴露给生成代码（$TRAJ_DIR/$TRAJ_ID），供自省与起子 run。
-	st.executor.vars = prepend_traj_vars(&st.traj, ctx.vars);
+	st.executor.vars = prepend_traj_vars(&st.traj, ctx);
 
 	// 子 run（doc 7）：若父进程通过 LLMCLI_PARENT_TRAJ_* 交代了父轨迹，则本进程是一条
 	// 子 run——在父轨迹上写 fork 步骤，结束时写 merge。
@@ -312,7 +311,7 @@ fn bool stall_guard(RunState* st, runtime::ExecResult* exec, String code)
 
 fn trajectory::Trajectory open_trajectory(cli::Ctx* ctx) @private
 {
-	// 存放位置只由命令行决定（--traj-dir / --config-dir，见 doc 8），不因环境变量改根。
+	// 存放位置只由命令行决定（--traj-dir，见 doc 8），不因环境变量改根。
 	// 子 run 的父指针（$LLMCLI_PARENT_TRAJ_*）只用于在父轨迹写 fork/merge，见 register_parent。
 	if (ctx.traj_id.len)
 	{
@@ -352,16 +351,20 @@ fn void apply_executor_overrides(runtime::Executor* ex, cli::Ctx* ctx) @private
 	if (ctx.max_exec_time != 0) ex.max_exec_time = ctx.max_exec_time;
 }
 
-fn String[] prepend_traj_vars(trajectory::Trajectory* traj, String[] vars) @private
+fn String[] prepend_traj_vars(trajectory::Trajectory* traj, cli::Ctx* ctx) @private
 {
 	List{String} all;
 	all.init(mem);
 	all.push(string::format(mem, "TRAJ_DIR=%s", traj.root));
 	all.push(string::format(mem, "TRAJ_ID=%s", traj.name));
-	// 父轨迹坐标：生成代码若调 `llmcli shellm` 起子 run，子进程据此在父轨迹写 fork/merge。
+	// 父轨迹坐标：生成代码若起子 run（`llmcli "..."`），子进程据此在父轨迹写 fork/merge。
 	all.push(string::format(mem, "LLMCLI_PARENT_TRAJ_DIR=%s", traj.root));
 	all.push(string::format(mem, "LLMCLI_PARENT_TRAJ_ID=%s", traj.name));
-	foreach (v : vars) all.push(v);
+	// 凭据与端点：子 run 是"再跑一次 llmcli"，需要它们才能重连同一端点。
+	all.push(string::format(mem, "MODEL=%s", ctx.model));
+	all.push(string::format(mem, "API_KEY=%s", ctx.api_key));
+	all.push(string::format(mem, "API_URL=%s", ctx.api_url));
+	foreach (v : ctx.vars) all.push(v);
 	return all.to_array(mem);
 }
 

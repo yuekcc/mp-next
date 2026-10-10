@@ -16,7 +16,6 @@ struct Llm
 	String api_url;
 	String api_key;
 	String model;
-	String effort;     // 思考强度（OpenAI 兼容侧透传/可忽略）
 	int max_tokens;    // 0 = 不限制
 }
 

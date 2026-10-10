@@ -48,9 +48,9 @@ fn int print_system_prompt(cli::Ctx* ctx)
 
 // ---- 一次真实运行 ----
 
-fn int run_entry(String[] args, bool stdin_ok = true)
+fn int run_entry(String[] args)
 {
-	cli::ParseResult parsed = cli::resolve(args, stdin_ok);
+	cli::ParseResult parsed = cli::resolve(args);
 	trajectory::configure(parsed.ctx.traj_dir, parsed.ctx.config_dir);
 	log::init(parsed.ctx.quiet, parsed.ctx.debug, parsed.ctx.no_color);
 	log::add_secret(parsed.ctx.api_key);
@@ -67,8 +67,6 @@ fn int run_entry(String[] args, bool stdin_ok = true)
 		io::eprintfn("运行 llmcli --help 查看全部 flags");
 		return cli::EXIT_USAGE;
 	}
-	if (parsed.ctx.list_trajectories) return list_trajectories();
-	if (parsed.ctx.list_skills) return list_skills();
 	if (parsed.ctx.print_system_prompt) return print_system_prompt(&parsed.ctx);
 
 	runtime::install_interrupt_handler();
@@ -81,7 +79,7 @@ fn int run_entry(String[] args, bool stdin_ok = true)
 // ---- 子命令（doc 7）：单二进制靠第一个参数派发 ----
 
 // 子命令名集合（doc 7）。shellm 等价 bin/shellm；traj/context/skills 是自省工具。
-const String[] COMMANDS = { "shellm", "traj", "context", "skills" };
+const String[] COMMANDS = { "traj", "context", "skills" };
 
 // 命令名位置：跳过子命令也认的全局 flag（目录 / 日志开关）后的第一个 token 才是命令名。
 // 这样 `llmcli --traj-dir X traj list` 与 `llmcli traj list` 都成立，而一个恰好叫 "traj"
@@ -239,19 +237,17 @@ fn int run_context_for(String name) @private
 fn int main(String[] args)
 {
 	configure_dirs(args);
+	// 只有 traj/context/skills 是子命令（第一个非全局-flag 参数命中时派发）；其余都是一次运行。
 	sz ci = command_index(args);
 	if (ci >= 0)
 	{
 		String cmd = args[ci];
-		// 命令名之后的 token 是子命令参数；之前的全局 flag 保留给同一次运行。
 		String[] tail = after(args, (usz)ci);
-		if (cmd == "traj") return run_traj(prepend_argv0(tail));
-		if (cmd == "context") return run_context(prepend_argv0(tail));
+		if (cmd == "traj") return run_traj(sub_args(tail));
+		if (cmd == "context") return run_context(sub_args(tail));
 		if (cmd == "skills") return list_skills();
-		// 子 run：等价 bin/shellm；带上命令名前的全局 flag（--model/--api-key/--traj-dir…）。
-		// stdin 已被父进程接 /dev/null，不再作为输入来源。
-		return run_entry(concat(head(args, (usz)ci), tail), false);
 	}
+	// 一次普通运行。生成代码起子 run 就是再跑一次 llmcli：`llmcli "<task>"`。
 	return run_entry(args);
 }
 
@@ -264,32 +260,13 @@ fn String[] after(String[] args, usz index) @private
 	return out.to_array(mem);
 }
 
-// [argv0] + args[1..index]（argv0 占位 + 命令名之前的全局 flag）
-fn String[] head(String[] args, usz index) @private
-{
-	List{String} out;
-	out.init(mem);
-	out.push(args[0]);
-	for (usz i = 1; i < index; i++) out.push(args[i]);
-	return out.to_array(mem);
-}
-
-// [argv0] + tail：给 run_traj/run_context 用（它们从 args[1] 起读 verb）
-fn String[] prepend_argv0(String[] tail) @private
+// 给 run_traj/run_context 用：它们从 args[1] 起读 verb，这里补一个占位元素。
+fn String[] sub_args(String[] tail) @private
 {
 	List{String} out;
 	out.init(mem);
 	out.push("llmcli");
 	foreach (t : tail) out.push(t);
-	return out.to_array(mem);
-}
-
-fn String[] concat(String[] a, String[] b) @private
-{
-	List{String} out;
-	out.init(mem);
-	foreach (x : a) out.push(x);
-	foreach (x : b) out.push(x);
 	return out.to_array(mem);
 }
 

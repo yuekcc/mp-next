@@ -85,7 +85,7 @@ class Mock:
 
 def run_cli(args, stdin_text=None, traj_dir=None, timeout=60, inherit_stdin=False):
     env = dict(os.environ)
-    # 轨迹根目录只由 --traj-dir / --config-dir 决定（不再读环境变量），每个场景一个隔离目录
+    # 轨迹根目录只由 --traj-dir 决定（不再读环境变量），每个场景一个隔离目录
     root = traj_dir or os.path.join(WORK, "traj")
     kwargs = {"stdin": None} if inherit_stdin else {"input": stdin_text}
     proc = subprocess.run(
@@ -146,7 +146,9 @@ def s1_help(mock):
     check("S1 --help：列出轨迹路径与风险提示",
           ".llmcli" in proc.stdout and "风险提示" in proc.stdout)
     check("S1 --help：说明 FINAL / FINAL_FILE 报捷", "FINAL" in proc.stdout, proc.stdout[:200])
-    check("S1 --help：说明子命令", "traj" in proc.stdout and "shellm" in proc.stdout)
+    check("S1 --help：说明子命令", "traj" in proc.stdout and "context" in proc.stdout)
+    check("S1 --help：说明子 run 用法", '"<子任务>"' in proc.stdout, proc.stdout[:400])
+    check("S1 --help：无 argv[0] 派发表述", "argv[0]" not in proc.stdout, proc.stdout[-400:])
 
 
 def s1_print_system_prompt(mock):
@@ -165,9 +167,10 @@ def s1_print_system_prompt(mock):
           proc.stdout.startswith("MARKER ") and "{{" not in proc.stdout,
           repr(proc.stdout[:120]))
 
-    proc = run_cli(["--print-system-prompt", "--list-skills"])
-    check("S1 --print-system-prompt 与动作开关冲突：退出码 2", proc.returncode == 2,
-          "exit=%d" % proc.returncode)
+    proc = run_cli(["--print-system-prompt", "--help"])
+    check("S1 --print-system-prompt 与 --help 同用：--help 胜出（退出码 0）",
+          proc.returncode == 0 and proc.stdout.startswith("llmcli"),
+          "exit=%d stdout=%r" % (proc.returncode, proc.stdout[:80]))
 
 
 def s1_single_turn(mock, verbose):
@@ -454,8 +457,8 @@ def s3_trajectory(mock, verbose):
           "before=%d after=%d" % (len(steps), len(after)))
     check("S3 续话：轨迹以 final 收尾", "final" in step_types(after), str(step_types(after)))
 
-    proc = run_cli(["--list-sessions"], traj_dir=root)
-    check("S3 --list-sessions：列出目录名与步数",
+    proc = run_cli(["traj", "list"], traj_dir=root)
+    check("S3 traj list：列出目录名与步数",
           "reg1" in proc.stdout and "步" in proc.stdout, repr(proc.stdout))
 
     if verbose:
@@ -647,11 +650,10 @@ def s5_max_iterations():
               str(len(server.requests())))
         check("S5 --max-iterations=1：退出码 3", proc.returncode == 3, str(proc.returncode))
 
-        # 别名 --max-turns 仍生效
         server.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", server.base_url,
-                        "--max-turns=2"], stdin_text="spin")
-        check("S5 --max-turns 别名：恰好发 2 次请求", len(server.requests()) == 2,
+                        "--max-iterations=2"], stdin_text="spin")
+        check("S5 --max-iterations 空格/等号形式：恰好发 2 次请求", len(server.requests()) == 2,
               str(len(server.requests())))
 
         # 不给该参数 = 不设上限：这里给 5 秒，够跑出远多于 1 次请求
@@ -670,7 +672,7 @@ def s5_max_iterations():
 
 
 def s6_subcommands():
-    """AC: traj / context 子命令可查轨迹；skills 等价 --list-skills。"""
+    """AC: traj / context 子命令可查轨迹；skills 列出技能。"""
     root = os.path.join(WORK, "s6_traj")
     server = Mock("block_loop", port=PORT + 32)
     try:

@@ -60,7 +60,7 @@ fn void test_prompt_and_input_file_conflict() @test
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model", "m", "--api-key", "k",
 	                                       "--input-file", "build/e2e/in.txt", "位置参数" });
 	test::eq(parsed.error.len != 0, true);
-	test::@check(parsed.error.contains("三选一"), "应提示输入来源冲突，实际：%s", parsed.error);
+	test::@check(parsed.error.contains("二选一"), "应提示输入来源冲突，实际：%s", parsed.error);
 }
 
 fn void test_system_prompt_and_file_conflict() @test
@@ -87,13 +87,13 @@ fn void test_input_file_missing_is_usage_error() @test
 	             "应指明路径，实际：%s", parsed.error);
 }
 
-fn void test_max_turns_parsing() @test
+fn void test_max_iterations_parsing() @test
 {
 	String path = "build/test_cli_input.txt";
 	(void)file::save(path, "内容");
 
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k",
-	                                       string::tformat("--input-file=%s", path), "--max-turns=3" });
+	                                       string::tformat("--input-file=%s", path), "--max-iterations=3" });
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.max_iterations, 3);
 	free(parsed.ctx.system_prompt.ptr);
@@ -101,43 +101,43 @@ fn void test_max_turns_parsing() @test
 
 	// 空格形式
 	parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
-	                      "--max-turns", "7" });
+	                      "--max-iterations", "7" });
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.max_iterations, 7);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
 
-fn void test_max_turns_zero_or_negative_means_unlimited() @test
+fn void test_max_iterations_zero_or_negative_means_unlimited() @test
 {
 	String path = "build/test_cli_input.txt";
 	(void)file::save(path, "内容");
 
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k",
-	                                       "--input-file", path, "--max-turns", "0" });
+	                                       "--input-file", path, "--max-iterations", "0" });
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.max_iterations, 0);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 
 	parsed = cli::resolve({ "llmcli", "--model=m", "--api-key=k", "--input-file", path,
-	                      "--max-turns", "-5" });
+	                      "--max-iterations", "-5" });
 	test::eq(parsed.error, "");
 	test::eq(parsed.ctx.max_iterations, 0);
 	free(parsed.ctx.system_prompt.ptr);
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
 
-fn void test_max_turns_non_integer_is_usage_error() @test
+fn void test_max_iterations_non_integer_is_usage_error() @test
 {
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model", "m", "--api-key", "k",
-	                                       "--max-turns", "abc", "--input-file", "x" });
+	                                       "--max-iterations", "abc", "--input-file", "x" });
 	test::eq(parsed.error.len != 0, true);
-	test::@check(parsed.error.contains("--max-turns 需要整数"),
+	test::@check(parsed.error.contains("--max-iterations 需要整数"),
 	             "应提示需要整数，实际：%s", parsed.error);
 }
 
-fn void test_max_turns_defaults_to_unlimited() @test
+fn void test_max_iterations_defaults_to_unlimited() @test
 {
 	String path = "build/test_cli_input.txt";
 	(void)file::save(path, "内容");
@@ -148,14 +148,7 @@ fn void test_max_turns_defaults_to_unlimited() @test
 	if (parsed.ctx.user_input.ptr) free(parsed.ctx.user_input.ptr);
 }
 
-fn void test_list_sessions_skips_required_flags() @test
-{
-	cli::ParseResult parsed = cli::resolve({ "llmcli", "--list-sessions" });
-	test::eq(parsed.ctx.list_trajectories, true);
-	test::eq(parsed.error.len, 0);
-}
-
-fn void test_invalid_session_id_is_usage_error() @test
+fn void test_invalid_traj_id_is_usage_error() @test
 {
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--traj", "../escape" });
 	test::@check(parsed.error.contains("--traj"), "应提示 traj id 非法，实际：%s", parsed.error);
@@ -264,15 +257,6 @@ fn void test_parse_dash_h_is_help() @test
 	test::eq(parsed.ctx.user_input, "");
 }
 
-// --list-sessions 同理，且不要求 --model / --api-key（与 001 的 AC 一致）
-fn void test_parse_list_sessions_returns_immediately() @test
-{
-	cli::ParseResult parsed = cli::parse({ "llmcli", "--list-sessions" });
-	test::eq(parsed.ctx.list_trajectories, true);
-	test::eq(parsed.error, "");
-	test::eq(parsed.ctx.user_input, "");
-}
-
 // ---- --print-system-prompt -------------------------------------------------
 
 // 动作开关：纯解析即完成，不要求 --model / --api-key，也不读输入
@@ -285,15 +269,12 @@ fn void test_parse_print_system_prompt_returns_immediately() @test
 	test::eq(parsed.ctx.system_prompt, "");
 }
 
-// 与其它动作开关同用属用法错误
-fn void test_parse_print_system_prompt_conflicts_with_actions() @test
+// --help 是最高优先级的动作：与 --print-system-prompt 同用时 --help 胜出（不报错）
+fn void test_parse_help_wins_over_print_system_prompt() @test
 {
-	cli::ParseResult parsed = cli::parse({ "llmcli", "--print-system-prompt", "--list-skills" });
-	test::@check(parsed.error.contains("--print-system-prompt"),
-	             "应提示与动作开关冲突，实际：%s", parsed.error);
-
-	parsed = cli::parse({ "llmcli", "--print-system-prompt", "--list-sessions" });
-	test::@check(parsed.error.len != 0, "与 --list-sessions 同用应报错，实际：%s", parsed.error);
+	cli::ParseResult parsed = cli::parse({ "llmcli", "--print-system-prompt", "--help" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.help, true);
 }
 
 // 系统提示词来源互斥对 print 模式同样成立（不能在动作短路处漏检）
@@ -332,7 +313,7 @@ fn void test_parse_usage_error_needs_no_input() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--model", "m", "--api-key", "k",
 	                                     "--input-file", "build/no-such-file.txt", "位置参数" });
-	test::@check(parsed.error.contains("三选一"), "应在读输入前先报冲突，实际：%s", parsed.error);
+	test::@check(parsed.error.contains("二选一"), "应在读输入前先报冲突，实际：%s", parsed.error);
 	test::eq(parsed.ctx.user_input, "");
 
 	parsed = cli::parse({ "llmcli", "--model", "m", "--api-key", "k",
@@ -344,9 +325,9 @@ fn void test_parse_usage_error_needs_no_input() @test
 	             "缺输入也应在纯解析里报错，实际：%s", parsed.error);
 }
 
-// session-id 会直接当文件名用，校验必须在读任何输入之前——parse 里就挡住。
-// 这里给一个不存在的 --input-file：真去读会报「无法读取」，报的是 session-id 才说明校验在前。
-fn void test_parse_rejects_invalid_session_id_without_reading_input() @test
+// traj 会直接当目录名用，校验必须在读任何输入之前——parse 里就挡住。
+// 这里给一个不存在的 --input-file：真去读会报「无法读取」，报的是 traj id 才说明校验在前。
+fn void test_parse_rejects_invalid_traj_id_without_reading_input() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--model=m", "--api-key=k",
 	                                     "--traj=../escape",
@@ -355,7 +336,7 @@ fn void test_parse_rejects_invalid_session_id_without_reading_input() @test
 	test::eq(parsed.ctx.user_input, "");
 }
 
-// resolve 在 parse 之上只多做三件事：读 --system-prompt-file、按三选一取 user_input、展开默认提示词。
+// resolve 在 parse 之上只多做三件事：读 --system-prompt-file、按二选一取 user_input、展开默认提示词。
 fn void test_resolve_fills_what_parse_leaves_empty() @test
 {
 	String path = "build/test_cli_input.txt";
@@ -383,7 +364,7 @@ fn void test_resolve_fills_what_parse_leaves_empty() @test
 fn void test_resolve_keeps_every_parsed_field() @test
 {
 	String[] args = { "llmcli", "--model=m", "--api-key=k", "--api-url=http://x/v1",
-	                  "--config-dir=build/cfg", "--traj=s1", "--max-iterations=4",
+	                  "--traj=s1", "--max-iterations=4",
 	                  "--quiet", "--no-color", "问题" };
 	cli::ParseResult parsed = cli::parse(args);
 	test::eq(parsed.error, "");
@@ -393,13 +374,12 @@ fn void test_resolve_keeps_every_parsed_field() @test
 	test::eq(resolved.ctx.model, parsed.ctx.model);
 	test::eq(resolved.ctx.api_key, parsed.ctx.api_key);
 	test::eq(resolved.ctx.api_url, parsed.ctx.api_url);
-	test::eq(resolved.ctx.config_dir, parsed.ctx.config_dir);
 	test::eq(resolved.ctx.traj_id, parsed.ctx.traj_id);
 	test::eq(resolved.ctx.max_iterations, parsed.ctx.max_iterations);
 	test::eq(resolved.ctx.quiet, parsed.ctx.quiet);
 	test::eq(resolved.ctx.no_color, parsed.ctx.no_color);
 	test::eq(resolved.ctx.debug, parsed.ctx.debug);
-	test::eq(resolved.ctx.list_trajectories, parsed.ctx.list_trajectories);
+	test::eq(resolved.ctx.print_system_prompt, parsed.ctx.print_system_prompt);
 	test::eq(resolved.ctx.help, parsed.ctx.help);
 
 	// 位置参数路径：prompt 原样搬运成 user_input（同一个切片，不复制）

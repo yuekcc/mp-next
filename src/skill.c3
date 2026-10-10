@@ -11,7 +11,7 @@ import std::collections::list;
 //
 // 本模块产出的两样东西：
 //   - print_installed()：拼进系统提示词的 `<available_skills>` 块（模型据此决定读哪个）；
-//   - print_brief()：`--list-skills` 的简表，供人查看。
+//   - print_brief()：`skills` 子命令的简表，供人查看。
 //
 // llmcli 里 bash 是唯一工具，所以提示词让模型用 bash 去读 SKILL.md，
 // 而不是 mini_pi 里的 ReadFile 工具。
@@ -113,7 +113,7 @@ fn String SkillHub.print_installed(&self, Allocator allocator)
 	return buf.copy_str(allocator);
 }
 
-// 简表：每行 `<序号>. <name>: <description>`，供 --list-skills 打印、便于 grep。
+// 简表：每行 `<序号>. <name>: <description>`，供 skills 子命令打印、便于 grep。
 fn String SkillHub.print_brief(&self, Allocator allocator)
 {
 	if (!self.skills.len()) return "No skill found";
