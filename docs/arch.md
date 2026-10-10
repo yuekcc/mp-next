@@ -4,7 +4,7 @@
 是什么样**：模块边界、运行时数据流、关键接口、内存模型与设计取舍。用法与参数见
 [README.md](../README.md) 与 `llmcli --help`；轨迹文件格式见 [sessions.md](sessions.md)；CI 集成见
 [ci.md](ci.md)；端点协议字段见 [references/chat-completion-api.md](references/chat-completion-api.md)；
-RLM 引擎的目标设计见 [rlm.md](rlm.md)。
+RLM 引擎的设计说明（设计意图与迁移对照）见 [rlm.md](rlm.md)。
 
 > 阅读顺序建议：先读「1. 系统定位」，再读「2. 架构总览」与「3. 一次 run 的生命周期」建立整体
 > 图景，然后按需进入「4. 模块设计」。改代码前请连同「5. 设计决策与硬约束」一起看。

@@ -1,16 +1,15 @@
 # RLM 引擎设计（shellm 等价实现）
 
-本文是 llmcli 演进为 **shellm 等价实现** 的目标设计。它描述一个**单二进制、进程内对象**
-架构的 Recursive Language Model (RLM) 引擎：模型写 bash 代码、本地执行、输出回填，循环直到
-代码设置 `FINAL` / `FINAL_FILE`；同时具备 shellm 的 trajectory、context 渲染、自省与递归子 run
-能力。
+本文描述 llmcli 的 **shellm 等价实现**：一个**单二进制、进程内对象**架构的 Recursive Language
+Model (RLM) 引擎——模型写 bash 代码、本地执行、输出回填，循环直到代码设置 `FINAL` /
+`FINAL_FILE`；同时具备 shellm 的 trajectory、context 渲染、自省与递归子 run 能力。
 
-阅读前提：现状见 [arch.md](arch.md)（当前实现），本文只讲**目标形态与迁移路径**。会话文件格式见
-[sessions.md](sessions.md)（将被 trajectory 取代，保留兼容说明）。
+阅读前提：[arch.md](arch.md) 是按现状重写的架构文档，本文补 RLM 引擎的设计意图与取舍；轨迹文件
+格式见 [sessions.md](sessions.md)。
 
-> 状态：**已落地**（本期范围）。沙箱（Docker）**不在本期范围**，见「非目标」。
-> 实现见 `src/`：`agent.c3`（主循环）、`trajectory.c3`、`context.c3`、`llm.c3`、`runtime.c3`
-> （bash Executor）。「会话文件格式」一节描述的目标形态现由 `trajectory.c3` 承担。
+> 状态：**已落地**（本期范围）。实现见 `src/`：`agent.c3`（主循环）、`trajectory.c3`、`context.c3`、
+> `llm.c3`、`runtime.c3`（bash Executor）。沙箱（Docker）**不在本期范围**，见「非目标」。
+> 下文保留设计时的叙述口吻（含迁移对照），供理解取舍；现状以 [arch.md](arch.md) 为准。
 
 ---
 
@@ -109,7 +108,7 @@ cmd/llmcli.c3                     # main：域名派发（子命令 / 主循环�
 
 ### 4.1 `Trajectory`（唯一真相源）
 
-append-only 的步骤日志，持久化为 jsonl。取代并扩展当前 `session.c3`。
+append-only 的步骤日志，持久化为 jsonl。取代并扩展了早期的 `session.c3`（已删除）。
 
 ```
 struct Trajectory
@@ -162,9 +161,9 @@ struct Step
 | `fork` / `merge` | — | `child` / `from_traj` | 子 run 的 DAG 引用 |
 | `shellm-run` / `run-summary` | 排除 | — | 记账步骤，永不进上下文 |
 
-**落盘时机**：坚持当前 `session.c3` 的「整步一次 write、append 原子」语义；中断/报错后文件末尾
-永远是完整步骤。大字段（超阈值的 stdout / content）spill 到同目录 blob 文件，步骤里存
-`<field>_ref` + 字节数，渲染时按需取回（对应 shellm 的 blob 机制）。
+**落盘时机**：沿用 `session.c3` 的「整步一次 write、append 原子」语义（`trajectory::append`）；中断/
+报错后文件末尾永远是完整步骤。大字段（超阈值的 stdout / content）spill 到同目录 blob 文件，步骤里
+存 `<field>_ref` + 字节数，渲染时按需取回（对应 shellm 的 blob 机制）。
 
 > 兼容：现有 `.llmcli/sessions/<id>.jsonl` 的 `{ts,turn,message}` 行，可读时识别为旧格式并映射成
 > `prompt`/`reasoning`/`shell-output` 步骤（迁移一次性转换，不强制）。
@@ -198,8 +197,8 @@ fn Message[] render(Context*, Trajectory*, RenderPolicy*)
 截断（保留首尾、打 `[... truncated: N bytes total ...]` 桩）、`max_bytes` 预算二分、run 作用域。
 （shellm 里为 Anthropic 做的连续同角色合并不需要——OpenAI 兼容端点允许连续同角色消息。）
 
-**与现状的差别**：当前 `agent.c3` 维护内存 `List{Message}` 并只把每轮落盘当旁路。新设计里
-messages 每次都由 `render` 产生，内存不保存权威副本。
+**迁移前后的差别**：迁移前 `agent.c3` 维护内存 `List{Message}`、只把每轮落盘当旁路；现在 messages
+每次都由 `render` 从 trajectory 产生，内存不保存权威副本。
 
 ### 4.3 `Llm`（OpenAI 兼容调用）
 
@@ -304,12 +303,12 @@ run(ctx):
 ### 5.1 空响应重试
 
 `Llm --thinking` 时，模型可能把整个输出预算花在思维链上、返回 200 但可见文本为空。此时把
-thinking 作为 `assistant` 上下文回填 + 一句「继续」的 `user` 提示重试（默认 8 次）。当前 llmcli 把
-空响应当未收敛退 3，本设计的重试是等价补齐。
+thinking 作为 `assistant` 上下文回填 + 一句「继续」的 `user` 提示重试（默认 8 次）。迁移前的 llmcli
+把空响应当未收敛退 3，这里的重试是等价补齐。
 
 ### 5.2 代码块提取
 
-沿用当前 `agent.c3::extract_code` 的行级扫描（第一个块、裸围栏、`python` 缀行末、块内嵌围栏不早闭、
+沿用 `agent.c3::extract_code` 的行级扫描（第一个块、裸围栏、块内嵌围栏不早闭、
 多余块告警）。差异：围栏标记从 ```` ```python ```` 改为 shellm 的 ```` ```bash ```` / ```` ```sh ```` /
 裸 ```` ``` ````；可选补上 shellm 的 `normalize_toolcall_markup`（容忍 Qwen 系 `<tool_call>` 标记）
 与 heredoc 感知——本期先实现标准围栏 + heredoc 感知，标记归一化后置。
@@ -401,14 +400,16 @@ llmcli view / glob / put           # 可选文件工具
 
 ---
 
-## 10. 与当前 llmcli 的差异一览
+## 10. 迁移前后对比
 
-| 维度 | 当前 llmcli | 目标（shellm 等价） |
+下表是本次迁移的对照（左列是迁移前的 llmcli，右列是落地后的现状）：
+
+| 维度 | 迁移前 | 现状（shellm 等价） |
 |------|-------------|----------------------|
 | messages 来源 | 进程内 `List{Message}` 累加 | `Context` 每轮从 trajectory 重渲染 |
 | 持久化 | `--session-id` 可选旁路落盘 | trajectory 是唯一真相源，始终落盘 |
 | 生成代码 | Python | bash |
-| 完成信号 | `FINAL`/`FINAL_FILE`（已一致） | 同 |
+| 完成信号 | `FINAL`/`FINAL_FILE` | 同 |
 | 循环止损 | `--max-turns` | max-iterations + 空闲/输出量/墙钟三看门狗 + stall guard |
 | 递归 | 无 | 显式子 run + fork/merge |
 | 自省 | 无 | `traj`/`context` 子命令 |
@@ -418,23 +419,26 @@ llmcli view / glob / put           # 可选文件工具
 
 ---
 
-## 11. 迁移路径（以当前文件为基）
+## 11. 落地记录（原迁移路径）
+
+以下 7 步即本次提交所做的事，对应实现文件：
 
 1. **`trajectory.c3`**：从 `session.c3` 演进——加 `step_id`/`type`/`run_id`、fork/merge、blob spill；
-   保留整步原子写。含旧格式读取映射。
+   保留整步原子写。含旧格式读取映射。（`session.c3` 已删除。）
 2. **`context.c3`**：新增 `Context.render` + `RenderPolicy`（head/tail/pin、角色映射、分层截断、
    `max_bytes` 二分、run 作用域）。复用 `chat.c3::Message`。
-3. **`agent.c3`**：messages 改为每轮 `Context.render(traj)`；`flush_turn` 并入 `traj.append`；补空
+3. **`agent.c3`**：messages 改为每轮 `Context.render(traj)`；逐 turn 落盘并入 `traj.append`；补空
    响应重试、stall guard。
-4. **`runtime.c3` → `Executor`**：`run_python` 改 bash 包装（`FINAL`/`FINAL_FILE`、`stdin=/dev/null`、
-   xtrace 剥离、截断 + blob），加三看门狗与进程组。保留 Python 作为一个可选实现备查。
-5. **`llm.c3`**：新增统一的 OpenAI 兼容调用入口，把 `chat.c3`+`http.c3` 收进来；不做 provider 抽象。
+4. **`runtime.c3` → `Executor`**：`run_python` 改 bash 包装（`FINAL`/`FINAL_FILE`、`stdin` 接
+   `/dev/null`、xtrace 剥离、截断 + spill），加三看门狗与进程组杀树。保留 Python 作为可选实现备查。
+5. **`llm.c3`**：新增统一的 OpenAI 兼容调用入口，复用 `chat.c3`+`http.c3`；不做 provider 抽象。
 6. **`cli.c3` + `cmd/llmcli.c3`**：扩 flag 集 + 系统提示词新段落 + 子命令派发；`HELP` 同步。
-7. 收尾：更新 [sessions.md](sessions.md)（并入 trajectory 语义）、README 文档索引、`AGENTS.md`。
+7. 收尾：更新 [sessions.md](sessions.md)（轨迹语义）、README 文档索引、两份 `AGENTS.md`、
+   [arch.md](arch.md)。
 
-**测试**：单元测试扩到 `extract_code`(bash)、`Context.render`（角色/窗口/截断/预算）、`Trajectory`
-（append/load/fork/merge/spill 往返）；端到端回归扩到 trajectory 与子 run 场景（沿用
-[ci.md](ci.md) 的离线 mock 端点思路）。
+**测试**：单元测试覆盖 `extract_code`(bash + heredoc)、`Context.render`（角色/窗口/截断/预算）、
+`Trajectory`（append/load/fork/merge/spill/旧格式往返）；端到端回归扩到 trajectory 落盘、子 run
+fork/merge、空闲看门狗、`traj`/`context` 子命令（沿用 [ci.md](ci.md) 的离线 mock 端点思路）。
 
 ---
 
@@ -455,7 +459,7 @@ llmcli view / glob / put           # 可选文件工具
 
 ## 13. 与现有文档的关系
 
-- [arch.md](arch.md)：当前实现的架构；本文是其目标演进。
-- [sessions.md](sessions.md)：当前会话文件格式；目标形态并入 trajectory（第 8 节）。
-- [ci.md](ci.md)：非交互与超时；目标形态下 CI 仍用外部超时 + `--max-iterations`。
+- [arch.md](arch.md)：按现状重写的架构文档；本文是其 RLM 引擎的设计说明。
+- [sessions.md](sessions.md)：轨迹文件格式与落盘语义。
+- [ci.md](ci.md)：非交互与超时；CI 仍用外部超时 + `--max-iterations`。
 - [skills.md](skills.md)：技能发现与注入，`SkillHub` 沿用。
