@@ -61,9 +61,12 @@
 
 这些是代码注释与 PRD 都强调过的取舍，改坏了会让回归挂掉：
 
-- **`parse()` 是纯解析**：只看 argv，不读 stdin、不读文件；`--help` / `--list-*` / `--print-system-prompt`
+- **`parse()` 是纯解析**：只看 argv，不读 stdin、不读文件；`--help` / `--print-system-prompt`
   必须在碰 stdin 之前短路返回，否则在终端里会阻塞等输入。I/O（读文件、读管道）只在 `resolve()` 里发生。
-  子 run 传 `stdin_ok=false`：它的 stdin 被父进程接 `/dev/null`，不算输入来源。
+- **输入三选一**：`-p` / 位置参数 / `--input-file` 互斥；都不给则读 stdin 管道。显式输入存在时
+  忽略 stdin（子 run 的 stdin 被父进程接 `/dev/null`）。
+- **命令名必须是第一个参数**：`llmcli traj list` 才派发；命令名（traj/context/skills）是保留字，
+  同名任务用 `-p`。目录 flag（`--traj-dir`/`--config-dir`）的扫描集中在 `cli::configure_trajectory`。
 - **`Ctx` 字段必须归入五节之一**：初始设置 / 本次运行边界 / 解析中间量 / 日志开关 / 动作开关。
 - **trajectory 是唯一真相源**：每轮 messages 由 `context::render(traj)` 重渲染；内存不累加权威副本。
 - **`reasoning_content` 只入存档、绝不回传端点**：`chat.c3` 的 request / archive 两条序列化路径已分开；

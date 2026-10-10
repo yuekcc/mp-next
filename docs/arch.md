@@ -125,7 +125,7 @@ graph TD
 
 1. `main`——命令名必须是第一个参数：`is_command(args[1])` 命中时走子命令派发
    （`traj`/`context`/`skills`，先 `cli::configure_trajectory` 认目录 flag），否则走一次真实运行。
-   子 run 就是生成代码再跑一次 `llmcli "<task>"`。
+   子 run 就是生成代码再跑一次 `llmcli -p "<task>"`。
 2. 真实运行 `run_entry`：`cli::resolve(args)` → `trajectory::configure` → `log::init` /
    `log::add_secret` → 动作短路（`--help` / 用法错误 / `--print-system-prompt`）→
    `runtime::install_interrupt_handler()` → `http::http_init()` → `agent::run(&ctx)`。
@@ -191,18 +191,18 @@ stateDiagram-v2
 
 **两阶段解析**是本模块的核心结构：
 
-- `parse(args, stdin_ok=true) -> ParseResult`：**纯解析，零 I/O**。只看 argv，不读 stdin、不读文件。
+- `parse(args) -> ParseResult`：**纯解析，零 I/O**。只看 argv，不读 stdin、不读文件。
   所有与输入来源冲突、缺失、互斥、`traj` 目录名合法性相关的用法错误都在这里报出。动作开关
   （`--help` / `--print-system-prompt`）在这里就短路返回，
-  **必须在碰 stdin 之前结束**，否则 `llmcli --help` 在终端里会阻塞等输入。子 run 传
-  `stdin_ok=false`：它的 stdin 已被父进程接 `/dev/null`，不再算一个输入来源。
-- `resolve(args, stdin_ok=true)`：调 `parse` 后补齐运行输入。**唯一的 I/O 发生处**：读
-  `--system-prompt-file`、按三选一取 `user_input`（`--input-file` / 位置参数 / stdin 管道）、读不了
-  报用法错误、最后装配系统提示词。`resolve` 会保留 parse 定下的每个字段，只填空着的字段（测试
-  `test_resolve_keeps_every_parsed_field` 断言了这一点）。
+  **必须在碰 stdin 之前结束**，否则 `llmcli --help` 在终端里会阻塞等输入。
+- `resolve(args)`：调 `parse` 后补齐运行输入。**唯一的 I/O 发生处**：读
+  `--system-prompt-file`、按三选一取 `user_input`（`-p` / 位置参数 / `--input-file`；都不给则读
+  stdin 管道）、读不了报用法错误、最后装配系统提示词。`resolve` 会保留 parse 定下的每个字段，只
+  填空着的字段（测试 `test_resolve_keeps_every_parsed_field` 断言了这一点）。
 
-**输入三选一**在 `parse` 里就校验：靠 `io::stdin().isatty()` 判断是否有管道（isatty 只问一句，不
-读内容）。`source_count > 1` 或 `== 0` 都是用法错误。
+**输入三选一**在 `parse` 里就校验：`-p` / 位置参数 / `--input-file` 同时给多个即用法错误；都不
+给时靠 `io::stdin().isatty()` 判断是否有管道（isatty 只问一句，不读内容），无管道即缺输入。显式
+输入存在时忽略 stdin——`llmcli -p "<task>"` 的 stdin 被父进程接 `/dev/null` 也能直接工作。
 
 **系统提示词装配**（`assemble_system_prompt`）是唯一一处，`--print-system-prompt` 与真实运行共用，
 保证"打印的就是实际会发给端点的内容"：
@@ -349,8 +349,7 @@ header list 的生命周期需覆盖 `perform`；body 用 `COPYPOSTFIELDS` 让 l
 ### 5.1 行为与协议
 
 - **`parse()` 纯解析，I/O 只在 `resolve()`**：动作开关与用法错误都必须在碰 stdin 前结束，否则在
-  终端里阻塞。`--input-file` 指向不存在的文件时，也应先报输入来源冲突而不是先打开文件。
-- **RLM 不用 tools 协议**：请求体不带 `tools`；bash 是唯一工具。
+  终端里阻塞。`--input-file` 指向不存在的文件时，也应先报输入来源冲突而不是先打开文件。- **RLM 不用 tools 协议**：请求体不带 `tools`；bash 是唯一工具。
 - **`reasoning_content` 只入存档、绝不回传端点**：`chat` 的 request / archive 两条序列化路径已分开；
   轨迹里存 `reasoning_content`，但 `context::render` 不读它。
 - **`FINAL` / `FINAL_FILE` 按"是否设置"判断，不按真假值**：`FINAL=""` 也算设置过（空答案收尾）；

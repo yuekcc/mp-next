@@ -15,8 +15,11 @@ c3c build        # 产物：build/llmcli(.exe)
 ## 快速上手
 
 ```bash
-# 单轮问答
+# 单轮问答（位置参数更顺手）
 llmcli --model gpt-4o-mini --api-key $KEY "用一句话解释什么是快排"
+
+# 用 -p 显式给 prompt（脚本 / 任务名可能撞子命令时更稳）
+llmcli --model gpt-4o-mini --api-key $KEY -p "traj"
 
 # 管道输入
 cat x.md | llmcli --model gpt-4o-mini --api-key $KEY
@@ -25,7 +28,7 @@ cat x.md | llmcli --model gpt-4o-mini --api-key $KEY
 llmcli --model gpt-4o-mini --api-key $KEY --traj work "把 src/cli.c3 里的拼写错误修掉"
 ```
 
-输入来源为位置参数 / `--input-file` 二选一（不能同时给）；两者都不给且 stdin 是管道时读管道。完整参数、退出码与示例见 `llmcli --help`。
+输入来源为 `-p` / 位置参数 / `--input-file` 三选一（不能同时给）；都不给且 stdin 是管道时读管道。子命令名（`traj`/`context`/`skills`）是保留字：要用同名任务请用 `-p traj` 或 stdin/`--input-file`。完整参数、退出码与示例见 `llmcli --help`。
 
 ## 子命令
 
@@ -42,10 +45,10 @@ llmcli skills                   # 列出本机可用 skill
 
 ## 子 run
 
-生成代码里再调用一次本二进制就是子 run，直接给任务即可（父轨迹会记 `fork`/`merge`）：
+生成代码里再调用一次本二进制就是子 run，用 `-p` 给任务（父轨迹会记 `fork`/`merge`）：
 
 ```bash
-llmcli "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
+llmcli -p "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
   --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
 ```
 

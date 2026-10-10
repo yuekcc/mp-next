@@ -153,7 +153,9 @@ def s1_help(mock):
           ".llmcli" in proc.stdout and "风险提示" in proc.stdout)
     check("S1 --help：说明 FINAL / FINAL_FILE 报捷", "FINAL" in proc.stdout, proc.stdout[:200])
     check("S1 --help：说明子命令", "traj" in proc.stdout and "context" in proc.stdout)
-    check("S1 --help：说明子 run 用法", '"<子任务>"' in proc.stdout, proc.stdout[:400])
+    check("S1 --help：说明子 run 用法", "-p" in proc.stdout and "子任务" in proc.stdout,
+          proc.stdout[-500:])
+    check("S1 --help：说明 -p prompt", "--prompt" in proc.stdout, proc.stdout[:600])
     check("S1 --help：无 argv[0] 派发表述", "argv[0]" not in proc.stdout, proc.stdout[-400:])
 
 
@@ -217,6 +219,28 @@ def s1_single_turn(mock, verbose):
               "exit=%d stdout=%r stderr=%s" % (proc.returncode, proc.stdout, proc.stderr))
     else:
         check("S1 --input-file / 位置参数：本环境 stdin 非终端，跳过（冲突路径另测）", True, "")
+
+    # -p 显式 prompt：任务名撞子命令也不歧义
+    mock.reset()
+    proc = run_cli(["-p", "traj", "--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url],
+                   inherit_stdin=True)
+    check("S1 -p traj：当任务跑而非列轨迹", proc.returncode == 0 and proc.stdout.strip() == "traj",
+          "exit=%d stdout=%r stderr=%s" % (proc.returncode, proc.stdout, proc.stderr))
+
+    mock.reset()
+    proc = run_cli(["--prompt=skills", "--model", "any", "--api-key", API_KEY,
+                    "--api-url", mock.base_url], inherit_stdin=True)
+    check("S1 --prompt=skills：当任务跑而非列技能",
+          proc.returncode == 0 and proc.stdout.strip() == "skills",
+          "exit=%d stdout=%r stderr=%s" % (proc.returncode, proc.stdout, proc.stderr))
+
+    # 裸位置参数只有当它是**第一个参数**时才是命令；前面有 flag 时它是 prompt。
+    mock.reset()
+    proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url, "traj"],
+                   inherit_stdin=True)
+    check("S1 裸 'traj' 前面有 flag：当 prompt 跑（非子命令）",
+          proc.returncode == 0 and proc.stdout.strip() == "traj",
+          "exit=%d stdout=%r" % (proc.returncode, proc.stdout))
 
     mock.reset()
     proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url,

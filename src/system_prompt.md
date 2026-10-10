@@ -53,9 +53,9 @@
 - 长流程宜后台执行（`cmd > log 2>&1 &`）并分步查探，勿空等。
 - 需自省或递归时，可调同一二进制之子命令：
   - `llmcli traj tail "$TRAJ_ID"` / `llmcli traj show "$TRAJ_ID"` —— 看自己的轨迹
-  - 起子 run（最有力之工具）——就是再跑一次 llmcli，直接给任务：
+  - 起子 run（最有力之工具）——就是再跑一次 llmcli，用 -p 给任务：
 
-        llmcli "子任务" --traj-dir "$TRAJ_DIR" \
+        llmcli -p "子任务" --traj-dir "$TRAJ_DIR" \
           --model "$MODEL" --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
 
     子 run 会在同一 $TRAJ_DIR 下新建轨迹，并在父轨迹记 fork/merge；用后台执行 + 读日志跟踪进度。

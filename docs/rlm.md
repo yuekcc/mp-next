@@ -341,7 +341,7 @@ thinking 作为 `assistant` 上下文回填 + 一句「继续」的 `user` 提�
 生成代码要自省与递归时，调用的是**同一个二进制**。命令名必须是第一个参数：
 
 ```
-llmcli "<task>"                    # 起一个子 run（就是再跑一次 llmcli）
+llmcli -p "<task>"                 # 起一个子 run（就是再跑一次 llmcli）
 llmcli traj    show <id> --full    # 等价 bin/traj
 llmcli traj    list --children
 llmcli context --traj <id>         # 等价 bin/context
@@ -349,9 +349,10 @@ llmcli skills                      # 等价 bin/skills
 ```
 
 - **宿主部署**：就是一个文件，无需软链/别名或 argv[0] 派发。
-- **子 run**：`llmcli "<task>"` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
-  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子 run 进度。子 run 的 stdin 被父进程
-  接 `/dev/null`，显式位置参数存在时不再被当输入来源（见 4.4 与 §9 输入判定）。
+- **子 run**：`llmcli -p "<task>"` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
+  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子 run 进度。用 `-p` 是为了避开与
+  子命令名（traj/context/skills）的歧义；子 run 的 stdin 被父进程接 `/dev/null`，显式输入存在时
+  不再被当输入来源（见 4.4 与 §9 输入判定）。
 - **递归语义**：循环本身**不自调用**（任何一轮都只是 `Llm.call`）；递归只来自生成代码**显式**起
   子 run。
 
@@ -385,6 +386,7 @@ llmcli skills                      # 等价 bin/skills
 
 | Flag | 作用 |
 |------|------|
+| `-p, --prompt <text>` | 显式 prompt（与位置参数 / `--input-file` 三选一；子 run 推荐） |
 | `--max-iterations N` | 循环上限（0 或不给=不限） |
 | `--traj <id>` / `--resume` | 写入/续接既有轨迹 |
 | `--context-scope traj\|run` | 渲染范围（默认 traj） |

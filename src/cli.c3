@@ -98,11 +98,25 @@ fn ParseResult parse(String[] args)
 		String arg = args[i];
 		// -h 不以 -- 开头，得在位置参数分支之前单独认，否则被当 prompt 吃掉
 		if (arg == "-h") { o.help = true; i++; continue; }
+		// -p <task>：显式 prompt。给了它时命令名不会被派发（见 cmd/main），
+		// 所以 `llmcli -p traj` 是把 "traj" 当任务，而不是跑 traj 子命令。
+		if (arg == "-p")
+		{
+			if (seen_prompt)
+			{
+				res.error = "只接受一个 prompt";
+				return res;
+			}
+			if (!take_value(args, &i, arg, "", false, &o.prompt, &res.error)) return res;
+			seen_prompt = true;
+			i++;
+			continue;
+		}
 		if (!arg.starts_with("--"))
 		{
 			if (seen_prompt)
 			{
-				res.error = "只接受一个位置参数 prompt";
+				res.error = "只接受一个位置参数 prompt（或用 -p / --input-file）";
 				return res;
 			}
 			o.prompt = arg;
@@ -125,6 +139,18 @@ fn ParseResult parse(String[] args)
 			}
 		}
 
+		if (name == "--prompt")
+		{
+			if (seen_prompt)
+			{
+				res.error = "只接受一个 prompt";
+				return res;
+			}
+			if (!take_value(args, &i, name, inline_value, has_inline, &o.prompt, &res.error)) return res;
+			seen_prompt = true;
+			i++;
+			continue;
+		}
 		if (name == "-h" || name == "--help") { o.help = true; i++; continue; }
 		if (name == "--quiet") { o.quiet = true; i++; continue; }
 		if (name == "--debug") { o.debug = true; i++; continue; }
@@ -263,20 +289,20 @@ fn ParseResult parse(String[] args)
 	}
 
 	// 输入来源判定：
-	//   1) 显式来源（位置参数 / --input-file）优先；同时给两个才是用法错误。
-	//   2) 两者都没给时，stdin 是管道则用管道内容（isatty 只问一句，不读内容）。
-	//   3) 两者都没给、stdin 也不是管道 → 缺输入。
-	// 显式来源存在时不看 stdin：这样生成代码起子 run 用的 `llmcli "<task>"`（其 stdin 被父进程
-	// 接 /dev/null、非 tty）不会被误判成"位置参数 + stdin 管道"冲突。
+	//   1) 显式来源（-p / 位置参数 / --input-file）优先；同时给多个才是用法错误。
+	//   2) 都没给时，stdin 是管道则用管道内容（isatty 只问一句，不读内容）。
+	//   3) 都没给、stdin 也不是管道 → 缺输入。
+	// 显式来源存在时不看 stdin：这样生成代码起子 run 用的 `llmcli -p "<task>"`（其 stdin 被父
+	// 进程接 /dev/null、非 tty）不会被误判成"输入 + stdin 管道"冲突。
 	usz explicit_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0));
 	if (explicit_count > 1)
 	{
-		res.error = "输入必须二选一（位置参数 / --input-file），不能同时给";
+		res.error = "输入必须三选一（-p / 位置参数 / --input-file），不能同时给";
 		return res;
 	}
 	if (explicit_count == 0 && io::stdin().isatty())
 	{
-		res.error = "缺少输入：请用位置参数、stdin 管道或 --input-file 提供 prompt";
+		res.error = "缺少输入：请用 -p、位置参数、stdin 管道或 --input-file 提供 prompt";
 		return res;
 	}
 	return res;
@@ -489,10 +515,11 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 输出作为下一条 user 消息回填，循环直到代码里设置 FINAL / FINAL_FILE——bash 是唯一的工具。
 trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
 
-输入（位置参数与 --input-file 二选一；都不给时读 stdin 管道）：
+输入（-p / 位置参数 / --input-file 三选一，不能同时给；都不给时读 stdin 管道）：
+  -p, --prompt <text>      显式 prompt（推荐用于脚本 / 子 run：任务名撞子命令也不歧义）
   <prompt>                 位置参数，直接写在命令行上
   --input-file <file>      从文件读取（UTF-8）
-  stdin                    管道输入，如 cat x.md | llmcli ...（未给上面两者时才用）
+  stdin                    管道输入，如 cat x.md | llmcli ...（未给上面三者时才用）
 
 必备参数：
   --api-key <key>          API 密钥；不读环境变量兜底，缺失即用法错误
@@ -531,9 +558,9 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   llmcli context [--traj <name>]  打印渲染出的 messages
   llmcli skills             列出本机可用 skill
 
-子 run：生成代码里再调用一次本二进制就是子 run，直接给任务即可（父轨迹会记 fork/merge）：
+子 run：生成代码里再调用一次本二进制就是子 run，用 -p 给任务最稳（父轨迹会记 fork/merge）：
 
-  llmcli "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
+  llmcli -p "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
     --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
 
 退出码：
@@ -545,15 +572,18 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
 
 示例：
   llmcli --model gpt-4o-mini --api-key $KEY "用一句话解释什么是快排"
+  llmcli --model gpt-4o-mini --api-key $KEY -p "用一句话解释什么是快排"
   cat README.md | llmcli --model gpt-4o-mini --api-key $KEY
   llmcli --model gpt-4o-mini --api-key $KEY --system-prompt-file sys.md \
          --input-file article.md --traj work
 
-注意：输入来源为位置参数 / --input-file 二选一（不能同时给）。两者都不给时若 stdin 是管道，
-      则读管道内容；否则报"缺少输入"。显式给了位置参数或 --input-file 时忽略 stdin——
-      这正是生成代码写 llmcli "<子任务>"（stdin 被父进程接 /dev/null）能直接工作的原因。
-      要让模型既看内容又听指令，请把指令写进 --system-prompt / --system-prompt-file，内容走
+注意：输入来源为 -p / 位置参数 / --input-file 三选一（不能同时给）。三者都不给时若 stdin 是
+      管道则读管道，否则报"缺少输入"。显式给了其中之一就忽略 stdin——这正是生成代码写
+      llmcli -p "<子任务>"（stdin 被父进程接 /dev/null）能直接工作的原因。
+      要用任务拿内容又听指令，请把指令写进 --system-prompt / --system-prompt-file，内容走
       stdin 或 --input-file。
+      子命令名（traj/context/skills）是保留字：裸位置参数恰好是它们会被当子命令；要用同名任务，
+      请用 -p traj 或 stdin / --input-file。
 
 系统提示词还会自动追加本机可用 skill 列表（发现于 ~/.agents/skills 与
   ./.agents/skills 下各 <name>/SKILL.md），模型可据此用 bash 读取并照其执行。

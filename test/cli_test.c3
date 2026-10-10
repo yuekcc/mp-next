@@ -60,7 +60,7 @@ fn void test_prompt_and_input_file_conflict() @test
 	cli::ParseResult parsed = cli::resolve({ "llmcli", "--model", "m", "--api-key", "k",
 	                                       "--input-file", "build/e2e/in.txt", "位置参数" });
 	test::eq(parsed.error.len != 0, true);
-	test::@check(parsed.error.contains("二选一"), "应提示输入来源冲突，实际：%s", parsed.error);
+	test::@check(parsed.error.contains("三选一"), "应提示输入来源冲突，实际：%s", parsed.error);
 }
 
 fn void test_system_prompt_and_file_conflict() @test
@@ -313,7 +313,7 @@ fn void test_parse_usage_error_needs_no_input() @test
 {
 	cli::ParseResult parsed = cli::parse({ "llmcli", "--model", "m", "--api-key", "k",
 	                                     "--input-file", "build/no-such-file.txt", "位置参数" });
-	test::@check(parsed.error.contains("二选一"), "应在读输入前先报冲突，实际：%s", parsed.error);
+	test::@check(parsed.error.contains("三选一"), "应在读输入前先报冲突，实际：%s", parsed.error);
 	test::eq(parsed.ctx.user_input, "");
 
 	parsed = cli::parse({ "llmcli", "--model", "m", "--api-key", "k",
@@ -336,7 +336,7 @@ fn void test_parse_rejects_invalid_traj_id_without_reading_input() @test
 	test::eq(parsed.ctx.user_input, "");
 }
 
-// resolve 在 parse 之上只多做三件事：读 --system-prompt-file、按二选一取 user_input、展开默认提示词。
+// resolve 在 parse 之上只多做三件事：读 --system-prompt-file、按三选一取 user_input、展开默认提示词。
 fn void test_resolve_fills_what_parse_leaves_empty() @test
 {
 	String path = "build/test_cli_input.txt";
@@ -386,6 +386,47 @@ fn void test_resolve_keeps_every_parsed_field() @test
 	test::eq(resolved.ctx.prompt, "问题");
 	test::eq(resolved.ctx.user_input, "问题");
 	free(resolved.ctx.system_prompt.ptr);
+}
+
+// ---- -p / --prompt 显式 prompt ----
+
+fn void test_parse_prompt_flag() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "-p", "任务", "--model=m", "--api-key=k" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.prompt, "任务");
+
+	parsed = cli::parse({ "llmcli", "--prompt=另一个任务", "--model=m", "--api-key=k" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.prompt, "另一个任务");
+}
+
+// -p 与位置参数互斥
+fn void test_prompt_flag_and_positional_conflict() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "-p", "a", "--model=m", "--api-key=k", "b" });
+	test::eq(parsed.error.len != 0, true);
+	test::@check(parsed.error.contains("只接受一个"), "应提示 prompt 重复，实际：%s", parsed.error);
+}
+
+// -p 的值可以是子命令名（不会被派发，因为 -p 落在 args[1]，命令名判定只看 args[1]）
+fn void test_prompt_flag_value_may_equal_subcommand() @test
+{
+	cli::ParseResult parsed = cli::parse({ "llmcli", "-p", "traj", "--model=m", "--api-key=k" });
+	test::eq(parsed.error, "");
+	test::eq(parsed.ctx.prompt, "traj");
+}
+
+// resolve 从 -p 取 user_input
+fn void test_resolve_prompt_flag() @test
+{
+	@pool()
+	{
+		cli::ParseResult parsed = cli::resolve({ "llmcli", "-p", "显式任务", "--model=m", "--api-key=k" });
+		test::eq(parsed.error, "");
+		test::eq(parsed.ctx.user_input, "显式任务");
+		free(parsed.ctx.system_prompt.ptr);
+	};
 }
 
 // ---- configure_trajectory：子命令共用的目录 flag 扫描（唯一一处） ----
