@@ -23,6 +23,7 @@ test/*_test.c3    → @test 单元测试（命令见 README）
 scripts/          → mock_llm.py（离线假端点）、regress.py（端到端回归）
 docs/arch.md      → 架构设计（RLM loop、模块结构与设计取舍）
 docs/rlm.md       → RLM 引擎设计（shellm 等价实现；现状已落地）
+docs/config.md    → 持久配置文件（llmcli.json）：需求、键与优先级
 docs/sessions.md  → 轨迹存储（文件格式、落盘时机与清理）
 docs/ci.md        → CI 集成（非交互用法与超时止损）
 docs/skills.md    → 技能发现与注入

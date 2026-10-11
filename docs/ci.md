@@ -8,6 +8,8 @@
 - 不需要任何交互输入，可无人值守运行。
 - 输出不是终端时不会出现 ANSI 颜色（也可显式加 `--no-color`）。
 - stdout 只有最终答案，过程日志全部走 stderr，重定向 stdout 即可拿到干净结果。
+- 常用偏好（模型 / 端点 / 阈值）可写进 `llmcli.json`（优先级 **内置默认 < 配置文件 < flag**）；
+  要固定可复现行为就显式传 flag 覆盖，或用 `--no-config` 只吃 flag（见 [config.md](config.md)）。
 
 ## 超时止损
 
@@ -35,7 +37,7 @@ jobs:
 
 - 加 `--debug`：会打印原始请求/响应（密钥脱敏、长文本仅为可读性截断）。
 - 看轨迹：`llmcli traj tail <name> [n]` / `llmcli traj show <name>` / `llmcli traj search <name> <pat>`
-  （轨迹根由 `--traj-dir` / `--config-dir` 决定）。
+  （轨迹根由 `--traj-dir` / 配置的 `traj_dir` / `--config-dir` 决定）。
 - 看渲染：`llmcli context --traj <name>`。
 
 ## 相关风险

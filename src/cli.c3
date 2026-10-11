@@ -4,7 +4,7 @@ import std::io;
 import std::core::mem::allocators;
 import std::collections::list;
 import std::time::datetime;
-import llmcli::buf, llmcli::skill, llmcli::trajectory;
+import llmcli::buf, llmcli::config, llmcli::log, llmcli::skill, llmcli::trajectory;
 
 // ---- 常量 ----
 
@@ -60,6 +60,7 @@ struct Ctx
 	String input_file;
 	String prompt;
 	String traj_dir;        // 解析中间量：轨迹根目录（--traj-dir），resolve 后搬到 trajectory 模块
+	bool no_config;         // 解析中间量：--no-config，跳过整份 llmcli.json（只在 resolve 里读）
 
 	// --- 日志开关：只影响 stderr 的过程日志，与请求/落盘内容无关 ---
 	bool quiet;        // stderr 只保留错误
@@ -74,6 +75,36 @@ struct Ctx
 struct ParseResult
 {
 	Ctx ctx;
+	Seen seen;
+	String error;
+}
+
+// 哪些配置键被命令行显式给出：config 只在对应 flag **没有**出现时才回填该字段
+// （优先级 默认 < 配置 < flag）。只由 parse 填、resolve 读；不进 agent，也不属 Ctx。
+struct Seen
+{
+	bool api_key;
+	bool api_url;
+	bool model;
+	bool traj_dir;
+	bool workdir;
+	bool system_prompt;
+	bool system_prompt_file;
+	bool max_iterations;
+	bool context_scope;
+	bool max_bytes;
+	bool inactivity_timeout;
+	bool max_output_size;
+	bool max_exec_time;
+	bool vars;
+	bool debug;
+	bool no_color;
+}
+
+// 子命令参数扫描结果：rest 是去掉目录 flag 后的参数，error 非空 = 配置读取失败（退出码 2）。
+struct TrajArgs
+{
+	String[] rest;
 	String error;
 }
 
@@ -153,8 +184,9 @@ fn ParseResult parse(String[] args)
 		}
 		if (name == "-h" || name == "--help") { o.help = true; i++; continue; }
 		if (name == "--quiet") { o.quiet = true; i++; continue; }
-		if (name == "--debug") { o.debug = true; i++; continue; }
-		if (name == "--no-color") { o.no_color = true; i++; continue; }
+		if (name == "--debug") { o.debug = true; res.seen.debug = true; i++; continue; }
+		if (name == "--no-color") { o.no_color = true; res.seen.no_color = true; i++; continue; }
+		if (name == "--no-config") { o.no_config = true; i++; continue; }
 		if (name == "--print-system-prompt") { o.print_system_prompt = true; i++; continue; }
 		if (name == "--resume") { o.resume = true; i++; continue; }
 
@@ -168,6 +200,7 @@ fn ParseResult parse(String[] args)
 				res.error = string::tformat("%s 需要整数，收到 %s", name, value);
 				return res;
 			}
+			res.seen.max_iterations = true;
 			// <=0 视为不设上限（与"没给这个参数"等价）
 			if (iters > 0) o.max_iterations = iters;
 			i++;
@@ -183,6 +216,7 @@ fn ParseResult parse(String[] args)
 				res.error = string::tformat("--max-bytes 需要整数，收到 %s", value);
 				return res;
 			}
+			res.seen.max_bytes = true;
 			if (bytes > 0) o.max_bytes = (usz)bytes;
 			i++;
 			continue;
@@ -199,10 +233,12 @@ fn ParseResult parse(String[] args)
 			}
 			if (name == "--inactivity-timeout")
 			{
+				res.seen.inactivity_timeout = true;
 				o.inactivity_timeout = secs;
 			}
 			else
 			{
+				res.seen.max_exec_time = true;
 				o.max_exec_time = secs;
 			}
 			i++;
@@ -218,6 +254,7 @@ fn ParseResult parse(String[] args)
 				res.error = string::tformat("--max-output-size 需要整数，收到 %s", value);
 				return res;
 			}
+			res.seen.max_output_size = true;
 			if (bytes > 0) o.max_output_size = (usz)bytes;
 			i++;
 			continue;
@@ -231,6 +268,7 @@ fn ParseResult parse(String[] args)
 				res.error = string::tformat("--context-scope 只能是 traj 或 run，收到 %s", value);
 				return res;
 			}
+			res.seen.context_scope = true;
 			o.context_scope = value;
 			i++;
 			continue;
@@ -244,21 +282,22 @@ fn ParseResult parse(String[] args)
 				res.error = string::tformat("--var 需要 NAME=VALUE 形式，收到 %s", value);
 				return res;
 			}
+			res.seen.vars = true;
 			vars.push(value.copy(mem));
 			i++;
 			continue;
 		}
 
 		String* slot = null;
-		if (name == "--api-key") slot = &o.api_key;
-		if (name == "--api-url") slot = &o.api_url;
-		if (name == "--model") slot = &o.model;
+		if (name == "--api-key") { slot = &o.api_key; res.seen.api_key = true; }
+		if (name == "--api-url") { slot = &o.api_url; res.seen.api_url = true; }
+		if (name == "--model") { slot = &o.model; res.seen.model = true; }
 		if (name == "--traj") slot = &o.traj_id;
-		if (name == FLAG_TRAJ_DIR) slot = &o.traj_dir;
+		if (name == FLAG_TRAJ_DIR) { slot = &o.traj_dir; res.seen.traj_dir = true; }
 		if (name == FLAG_CONFIG_DIR) slot = &o.config_dir;
-		if (name == "--workdir") slot = &o.workdir;
-		if (name == "--system-prompt") slot = &o.system_prompt;
-		if (name == "--system-prompt-file") slot = &o.system_prompt_file;
+		if (name == "--workdir") { slot = &o.workdir; res.seen.workdir = true; }
+		if (name == "--system-prompt") { slot = &o.system_prompt; res.seen.system_prompt = true; }
+		if (name == "--system-prompt-file") { slot = &o.system_prompt_file; res.seen.system_prompt_file = true; }
 		if (name == "--input-file") slot = &o.input_file;
 
 		if (!slot)
@@ -327,14 +366,20 @@ fn bool take_value(String[] args, usz* i, String flag, String inline_value,
 	return true;
 }
 
-// 在 argv 里找 --traj-dir / --config-dir 并配置轨迹根，返回去掉这两个 flag（及其值）后的
-// 参数列表。命令群（traj/context）没有完整 Ctx，但也要认这两个 flag；这是**唯一**一处扫
-// 这两个 flag 的地方，flag 知识不再散落到 cmd 层。
-// 认 `--flag value` 与 `--flag=value` 两种形态。
-fn String[] configure_trajectory(String[] args)
+// ---- 补齐运行输入（有 I/O） ----
+
+// 在 argv 里找 --traj-dir / --config-dir / --no-config 并配置轨迹根，返回去掉这些 flag
+// （及其值）后的参数列表与错误。命令群（traj/context/skills）没有完整 Ctx，但也吃配置里
+// 的 traj_dir：
+//   轨迹根 = --traj-dir > 配置的 traj_dir > <config-dir>/traj（再默认 ~/.llmcli/traj）。
+// 这是**唯一**一处扫这两个目录 flag 的地方，flag 知识不再散落到 cmd 层；因涉及读配置，它有
+// I/O，所以放在补齐阶段而非纯解析段。认 `--flag value` 与 `--flag=value` 两种形态。
+fn TrajArgs configure_trajectory(String[] args)
 {
+	TrajArgs res;
 	String traj_dir = "";
 	String config_dir = "";
+	bool no_config = false;
 	List{String} rest;
 	rest.init(tmem);
 	for (usz i = 0; i < args.len; i++)
@@ -366,13 +411,31 @@ fn String[] configure_trajectory(String[] args)
 			config_dir = a[13..];
 			continue;
 		}
+		if (a == "--no-config")
+		{
+			no_config = true;
+			continue;
+		}
 		rest.push(a);
 	}
-	if (traj_dir.len || config_dir.len) trajectory::configure(traj_dir, config_dir);
-	return rest.to_array(tmem);
-}
 
-// ---- 补齐运行输入（有 I/O） ----
+	// 子命令也读整份配置（坏配置照样退出码 2），但只吃 traj_dir；--no-config 整份跳过。
+	// 轨迹根只回填 flag 没给的情况，保持 --traj-dir 的优先级。
+	if (!no_config)
+	{
+		config::LoadResult loaded = config::load(config_dir);
+		if (loaded.error.len)
+		{
+			res.error = loaded.error;
+			return res;
+		}
+		if (!traj_dir.len && loaded.settings.h_traj_dir) traj_dir = loaded.settings.traj_dir;
+	}
+
+	if (traj_dir.len || config_dir.len) trajectory::configure(traj_dir, config_dir);
+	res.rest = rest.to_array(tmem);
+	return res;
+}
 
 // parse + 补齐运行所需的一切：系统提示词与用户输入也在这里读取。
 // 注意有 I/O 副作用：stdin 是管道时会阻塞到 EOF，--input-file / --system-prompt-file 会读文件。
@@ -381,6 +444,22 @@ fn ParseResult resolve(String[] args)
 	ParseResult res = parse(args);
 	Ctx* o = &res.ctx;
 	if (res.error.len || o.help) return res;
+
+	// 配置是文件 I/O，只能在补齐阶段读；--help 已在上面短路，所以看帮助永不读配置。
+	// 先按 flag 初始化日志，让配置加载期的告警也听 --quiet / --no-color（配置里的
+	// debug/no_color 由 main 在 resolve 后重新 init 时生效）。
+	log::init(o.quiet, o.debug, o.no_color);
+	if (!o.no_config)
+	{
+		config::LoadResult loaded = config::load(o.config_dir);
+		if (loaded.error.len)
+		{
+			res.error = loaded.error;
+			return res;
+		}
+		apply_config(o, &res.seen, &loaded.settings);
+	}
+
 	if (o.system_prompt_file.len)
 	{
 		// 读进来后统一走 expand_prompt_placeholders 复制到 mem，这里用 tmem 不留中间缓冲
@@ -446,6 +525,57 @@ fn ParseResult resolve(String[] args)
 	// 放在最后，让参数错误路径不产生 mem 分配。
 	assemble_system_prompt(o);
 	return res;
+}
+
+// 把配置回填进 Ctx：只改 flag **未显式给出**的字段（优先级 默认 < 配置 < flag）。
+// 数值与同名 flag 语义完全一致（含 0/负数的"不限/用默认/关闭"哨兵含义）。
+fn void apply_config(Ctx* o, Seen* seen, config::Settings* s) @private
+{
+	if (s.h_api_key && !seen.api_key) o.api_key = s.api_key;
+	if (s.h_api_url && !seen.api_url) o.api_url = s.api_url;
+	if (s.h_model && !seen.model) o.model = s.model;
+	if (s.h_traj_dir && !seen.traj_dir) o.traj_dir = s.traj_dir;
+	if (s.h_workdir && !seen.workdir) o.workdir = s.workdir;
+
+	if (s.h_max_iterations && !seen.max_iterations)
+	{
+		o.max_iterations = s.max_iterations > 0 ? s.max_iterations : 0;
+	}
+	if (s.h_max_bytes && !seen.max_bytes) o.max_bytes = s.max_bytes > 0 ? (usz)s.max_bytes : 0;
+	if (s.h_inactivity_timeout && !seen.inactivity_timeout) o.inactivity_timeout = s.inactivity_timeout;
+	if (s.h_max_output_size && !seen.max_output_size)
+	{
+		o.max_output_size = s.max_output_size > 0 ? (usz)s.max_output_size : 0;
+	}
+	if (s.h_max_exec_time && !seen.max_exec_time) o.max_exec_time = s.max_exec_time;
+	if (s.h_context_scope && !seen.context_scope) o.context_scope = s.context_scope;
+
+	// 布尔开关：配置能开；本次不提供反义 flag，命令行关不掉（要关就 --no-config 整份跳过）。
+	if (s.h_debug && !seen.debug) o.debug = s.debug;
+	if (s.h_no_color && !seen.no_color) o.no_color = s.no_color;
+
+	// var：配置提供基础，命令行逐键追加/覆盖（配置先、CLI 后；执行时后写的胜出）。
+	// 结果整体落在 mem（Ctx 里长期使用），旧 CLI 数组随即释放。
+	if (s.h_var)
+	{
+		List{String} out;
+		out.init(tmem);
+		foreach (v : s.vars) out.push(string::format(mem, "%s=%s", v.name, v.value));
+		if (seen.vars)
+		{
+			foreach (v : o.vars) out.push(v);
+			if (o.vars.len) free(o.vars.ptr);
+		}
+		o.vars = out.to_array(mem);
+	}
+
+	// 系统提示词来源二选一：flag 只要给了任一来源，本次运行就由 flag 决定，配置两个来源键都忽略
+	// （否则配置的 system_prompt_file 会反过来覆盖 flag 的 --system-prompt）。
+	if (!seen.system_prompt && !seen.system_prompt_file)
+	{
+		if (s.h_system_prompt) o.system_prompt = s.system_prompt;
+		if (s.h_system_prompt_file) o.system_prompt_file = s.system_prompt_file;
+	}
 }
 
 // 装配系统提示词：来源（--system-prompt / --system-prompt-file / 内置默认）→ 展开占位符
@@ -530,8 +660,9 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   --traj <id>              续接/写入既有轨迹目录；不给则新建
   --resume                 续接既有轨迹（配合 --traj）
   --traj-dir <dir>         轨迹根目录；默认 <config-dir>/traj（再默认 ~/.llmcli/traj）
-  --config-dir <dir>       配置目录根；只影响轨迹落盘位置，默认 ~/.llmcli
+  --config-dir <dir>       配置目录根：llmcli.json 与轨迹落盘位置的根，默认 ~/.llmcli
                            不读任何环境变量
+  --no-config              跳过整份 llmcli.json，只用内置默认 + 命令行 flag
   --max-iterations <n>     最多发起 n 次请求（n>0 生效）；不给或 <=0 表示不设上限
   --context-scope <s>      渲染范围 traj | run（默认 traj）
   --max-bytes <n>          context 渲染预算（字节）；0 = 不限
@@ -550,7 +681,24 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   --no-color               关闭 stderr 颜色
   -h, --help               打印本帮助
 
-子命令（命令名必须是第一个参数；子命令自身只认 --traj-dir / --config-dir）：
+配置文件（llmcli.json）：
+  启动时自动读取 <config-dir>/llmcli.json（config-dir 默认 ~/.llmcli），一次写好常用偏好，
+  日常只给"本次输入"。优先级固定为：内置默认值 < llmcli.json < 命令行 flag。
+  不存在则静默跳过；可用 --no-config 整份关闭。--help 不读配置文件。
+  键名 = 同名 flag 去掉 -- 并把连字符换成下划线；键缺失才落到内置默认：
+    api_key, api_url, model, traj_dir, workdir,
+    system_prompt, system_prompt_file（两者互斥）,
+    max_iterations, context_scope, max_bytes,
+    inactivity_timeout, max_output_size, max_exec_time,
+    var（对象，NAME -> VALUE）, debug, no_color
+  以下 flag 不属于持久偏好，配置文件里不认（写了按未知键告警并忽略）：
+    -h/--help、--print-system-prompt、-p/--prompt/位置参数、--input-file、--traj、--resume、
+    --config-dir、--quiet、--no-config。
+  JSON 语法错误或值类型不符会立刻报错（退出码 2）；未知键只告警不失败。
+  示例：{"model":"gpt-4o-mini","api_url":"https://...","max_iterations":20}
+  风险：api_key 写进配置文件即为明文落盘，是使用者显式选择；程序自身绝不写回任何密钥。
+
+子命令（命令名必须是第一个参数；子命令自身只认 --traj-dir / --config-dir / --no-config）：
   llmcli traj list [--children]   列出轨迹；--children 额外标注 fork/merge 子关系
   llmcli traj show <name> [--full] 打印某条轨迹的全部步骤（--full 不截断正文）
   llmcli traj tail <name> [n]     打印末尾 n 步

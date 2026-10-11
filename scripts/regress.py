@@ -83,16 +83,23 @@ class Mock:
             self.proc.kill()
 
 
-def run_cli(args, stdin_text=None, traj_dir=None, timeout=60, inherit_stdin=False):
+def run_cli(args, stdin_text=None, traj_dir=None, timeout=60, inherit_stdin=False,
+            config_dir=None, with_traj_dir=True):
     env = dict(os.environ)
-    # 轨迹根目录只由 --traj-dir 决定（不再读环境变量），每个场景一个隔离目录。
-    # 命令名必须是第一个参数：子命令场景把 --traj-dir 放在命令名之后，普通运行放在最前。
+    # 轨迹根目录只由 --traj-dir / 配置决定（不再读环境变量），每个场景一个隔离目录。
+    # 命令名必须是第一个参数：子命令场景把目录 flag 放在命令名之后，普通运行放在最前。
+    # --config-dir 指向隔离目录（默认空），避免机器上的 ~/.llmcli/llmcli.json 干扰回归。
     root = traj_dir or os.path.join(WORK, "traj")
+    cfg = config_dir or os.path.join(WORK, "cfg")
+    dir_flags = []
+    if with_traj_dir:
+        dir_flags += ["--traj-dir", root]
+    dir_flags += ["--config-dir", cfg]
     argv = list(args)
     if argv and argv[0] in ("traj", "context", "skills"):
-        argv = [argv[0], "--traj-dir", root] + argv[1:]
+        argv = [argv[0]] + dir_flags + argv[1:]
     else:
-        argv = ["--traj-dir", root] + argv
+        argv = dir_flags + argv
     kwargs = {"stdin": None} if inherit_stdin else {"input": stdin_text}
     proc = subprocess.run(
         [exe_path()] + argv,
@@ -103,6 +110,21 @@ def run_cli(args, stdin_text=None, traj_dir=None, timeout=60, inherit_stdin=Fals
         timeout=timeout,
         cwd=ROOT,
         **kwargs,
+    )
+    return proc
+
+
+def run_cli_raw(argv, stdin_text=None, timeout=60):
+    """不带任何隐式 flag 地跑一次（用于验证"配置唯一来源"的场景）。"""
+    proc = subprocess.run(
+        [exe_path()] + list(argv),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=dict(os.environ),
+        timeout=timeout,
+        cwd=ROOT,
+        input=stdin_text,
     )
     return proc
 
@@ -740,6 +762,45 @@ def s6_subcommands():
         server.stop()
 
 
+def s7_config(mock):
+    """AC: 仅靠 llmcli.json + 少量 flag 跑通；--no-config 关闭整份；子命令吃配置的 traj_dir。"""
+    cfg = os.path.join(WORK, "s7_cfg")
+    traj = os.path.join(WORK, "s7_traj")
+    os.makedirs(cfg, exist_ok=True)
+    with open(os.path.join(cfg, "llmcli.json"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"model": "any", "api_key": API_KEY, "api_url": mock.base_url,
+                             "traj_dir": traj, "max_iterations": 2}))
+
+    # 只给本次输入：model/api_key/api_url/traj_dir 全部来自配置
+    mock.reset()
+    proc = run_cli(["-p", "config only"], inherit_stdin=True, config_dir=cfg, with_traj_dir=False)
+    check("S7 配置：仅靠 llmcli.json 跑通（退出码 0）", proc.returncode == 0, proc.stderr)
+    check("S7 配置：stdout 有答案", "config only" in proc.stdout, repr(proc.stdout))
+    check("S7 配置：轨迹落到配置的 traj_dir",
+          os.path.isdir(traj) and bool(read_steps(traj)), traj)
+
+    # --no-config：配置被跳过 → 缺 model/api-key 报用法错误，且不发请求
+    mock.reset()
+    proc = run_cli(["-p", "x", "--no-config"], inherit_stdin=True, config_dir=cfg, with_traj_dir=False)
+    check("S7 --no-config：跳过配置后缺凭据 → 退出码 2", proc.returncode == 2, str(proc.returncode))
+    check("S7 --no-config：不发请求", len(mock.requests()) == 0)
+
+    # 子命令：命令名后不带 --traj-dir，轨迹根来自配置
+    proc = run_cli_raw(["traj", "list", "--config-dir", cfg])
+    check("S7 子命令：traj_dir 来自配置（列出轨迹）",
+          proc.returncode == 0 and "步" in proc.stdout, repr(proc.stdout))
+
+    # 坏配置：立刻报错、退出码 2、stdout 为空
+    bad = os.path.join(WORK, "s7_bad")
+    os.makedirs(bad, exist_ok=True)
+    with open(os.path.join(bad, "llmcli.json"), "w", encoding="utf-8") as fh:
+        fh.write('{"model": }')
+    proc = run_cli_raw(["-p", "x", "--config-dir", bad], stdin_text=None)
+    check("S7 坏配置：退出码 2", proc.returncode == 2, str(proc.returncode))
+    check("S7 坏配置：stderr 指出文件", "llmcli.json" in proc.stderr, repr(proc.stderr))
+    check("S7 坏配置：stdout 为空", proc.stdout == "", repr(proc.stdout))
+
+
 def s2_edit_task(run_index):
     """PRD 成功指标：读文件 -> 改文件 -> FINAL。"""
     work = os.path.join(WORK, "work")
@@ -796,6 +857,7 @@ def main():
         s3_reasoning()
         s4_ci_hygiene(mock)
         s6_subcommands()
+        s7_config(simple_mock)
         s2_interrupt()
         s5_max_iterations()
 

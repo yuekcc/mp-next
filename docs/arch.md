@@ -102,6 +102,7 @@ graph TD
 |------|------|----------|
 | `cmd/llmcli.c3` | `main`：子命令派发 → run；动作短路；列出轨迹/skill、`traj`/`context` 子命令 | `main` |
 | `src/cli.c3` | `Ctx`、`parse`（纯解析）、`resolve`（补 I/O）、`assemble_system_prompt`、`HELP`、退出码常量 | `resolve`, `parse` |
+| `src/config.c3` | 持久配置 `llmcli.json` 的定位 / 读取 / 解析：只产出独立于 `Ctx` 的中间结构，不做合并 | `load` |
 | `src/agent.c3` | RLM 全部：主循环、`extract_code`（bash + heredoc）、空响应重试、stall guard、子代理 fork/merge | `run`, `extract_code` |
 | `src/context.c3` | 把 `Trajectory` 渲染成 `Message[]`：head/tail/pin、角色映射、分层截断、`max_bytes`、run 作用域 | `render`, `default_policy` |
 | `src/trajectory.c3` | 步骤日志：`Step`/`Trajectory`、append、读回、fork/merge、blob spill、旧格式映射 | `open_new`, `append`, `read_all` |
@@ -185,7 +186,7 @@ stateDiagram-v2
 |------|------|----------|
 | 初始设置 | 本次运行的固定前提，运行期间不变 | `api_key`, `api_url`, `model` |
 | 本次运行边界 | 约束这一次 run 的范围 | `traj_id`, `resume`, `workdir`, `vars`, `max_iterations`, `context_scope`, `max_bytes`, `inactivity_timeout`, `max_output_size`, `max_exec_time`, `system_prompt`, `user_input` |
-| 解析中间量 | 只在 parse/resolve 用，agent 一次都不读 | `system_prompt_file`, `input_file`, `prompt`, `traj_dir` |
+| 解析中间量 | 只在 parse/resolve 用，agent 一次都不读 | `system_prompt_file`, `input_file`, `prompt`, `traj_dir`, `no_config` |
 | 日志开关 | 只影响 stderr，与请求/落盘无关 | `quiet`, `debug`, `no_color` |
 | 动作开关 | 决定 main 走哪条路，不改运行配置 | `list_trajectories`, `list_skills`, `print_system_prompt`, `help` |
 
@@ -195,7 +196,7 @@ stateDiagram-v2
   所有与输入来源冲突、缺失、互斥、`traj` 目录名合法性相关的用法错误都在这里报出。动作开关
   （`--help` / `--print-system-prompt`）在这里就短路返回，
   **必须在碰 stdin 之前结束**，否则 `llmcli --help` 在终端里会阻塞等输入。
-- `resolve(args)`：调 `parse` 后补齐运行输入。**唯一的 I/O 发生处**：读
+- `resolve(args)`：调 `parse` 后补齐运行输入。**唯一的 I/O 发生处**：读 `llmcli.json`（见 4.1.1）、读
   `--system-prompt-file`、按三选一取 `user_input`（`-p` / 位置参数 / `--input-file`；都不给则读
   stdin 管道）、读不了报用法错误、最后装配系统提示词。`resolve` 会保留 parse 定下的每个字段，只
   填空着的字段（测试 `test_resolve_keeps_every_parsed_field` 断言了这一点）。
@@ -215,6 +216,29 @@ stateDiagram-v2
 
 占位符替换用 `DString.replace` 做字节级替换；占位符全为 ASCII，不会命中多字节 UTF-8 字符内部。
 `--api-key` / `--model` 必填（不读环境变量兜底），缺失即用法错误。
+
+#### 4.1.1 持久配置 `llmcli.json`
+
+`parse` 记录**哪些 flag 被显式给出**（`ParseResult.seen`，只记录 presence、不进 `Ctx`），I/O 发生
+在 `resolve`：
+
+```
+内置默认值（parse 里直接落 Ctx）  <  llmcli.json  <  命令行 flag
+```
+
+- 文件定位：`<config-dir>/llmcli.json`；`config_dir` 只来自 `--config-dir` 或默认 `~/.llmcli`，
+  配置文件里不认 `config_dir`（避免自指），`--traj-dir` 也不影响文件位置。
+- **纯解析不变**：`--help` 在 `parse` 里就短路，`resolve` 一开头即返回，因此看帮助永不读配置；
+  `--print-system-prompt` 也读配置（系统提示词可能来自配置）。
+- **`src/config.c3` 只解析不合并**：`config::load` 用 cjson 读出 16 个已知键（缺失 = 不参与回填）、
+  语法/类型错误进 `error`、未知键 `log::warn` 后忽略；合并进 `Ctx`（只改 `seen` 为 false 的字段）
+  由 `cli::apply_config` 完成。串落在 `tmem`（随调用方 `@pool` 回收），加 `mem` 的 `--var` 结果除外。
+- **数值/布尔语义与同名 flag 完全一致**（含 0/负数的哨兵含义）；`var` 逐键合并（配置先、CLI 后，
+  执行时后写的 `export` 胜出）；`system_prompt` 与 `system_prompt_file` 在配置层也互斥，且 flag 一旦
+  给了任一来源，本次运行就由 flag 决定，配置两个来源键都被忽略。
+- 子命令（`traj`/`context`/`skills`）走 `cli::configure_trajectory`，也读整份配置（坏配置照样退出码 2），
+  但只把 `traj_dir` 用于轨迹根，并认 `--no-config`。
+- `--no-config` 跳过整份文件（真实运行与子命令都认）；配置文件不存在静默跳过。
 
 ### 4.2 `agent`：RLM 主循环
 
@@ -254,9 +278,9 @@ stateDiagram-v2
 
 ### 4.4 `trajectory`：唯一真相源
 
-- 目录 `<root>/<hex8>-<slug>/trajectory.jsonl`；`root` 优先级 `--traj-dir` → `<config-dir>/traj` →
-  `~/.llmcli/traj`，只由命令行决定，不读环境变量。`--config-dir` 目前只用来派生轨迹根，
-  保留为将来配置文件 / 临时文件的根目录。
+- 目录 `<root>/<hex8>-<slug>/trajectory.jsonl`；`root` 优先级 `--traj-dir` → 配置的 `traj_dir` →
+  `<config-dir>/traj` → `~/.llmcli/traj`，只由命令行 / 配置文件决定，不读环境变量。`--config-dir`
+  同时是 `llmcli.json`（见 4.1.1）与派生轨迹根的根目录。
 - 首行是头 `{"type":"trajectory"}`；其后每行一个 `Step`，**整步一次 write、append 原子**。
 - 大字段（超 8 KiB）spill 到 `blobs/<step_id>-<field>.blob`，步骤里存 `<field>_ref` + `<field>_bytes`。
 - `fork` 写 `{type:fork,child,slug}` 返子 id；`merge` 写 `{type:merge,from_traj}`。
@@ -364,7 +388,7 @@ header list 的生命周期需覆盖 `perform`；body 用 `COPYPOSTFIELDS` 让 l
 - **三看门狗**：空闲 / 输出量 / 墙钟；看门狗跑独立线程，**只用原子量，不能用 `tmem`**（线程本地）。
 - **输出合并 stdout+stderr，剥离 xtrace 行，超 2000 行截断为末 2000 行**，完整输出落临时文件并给出路径。
 - **每个步骤产生即 append**（整步一次 write）：中断/报错后文件末尾永远是完整步骤。
-- **轨迹根目录只由命令行决定**（`--traj-dir`），不读任何环境变量。
+- **轨迹根目录由 `--traj-dir` / 配置的 `traj_dir` 决定**，不读任何环境变量。
 
 ### 5.3 内存模型
 

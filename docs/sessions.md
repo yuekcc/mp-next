@@ -13,8 +13,8 @@ blobs         <根目录>/<hex8>-<slug>/blobs/
 ```
 
 - `hex8` 是首步 UUID 的前 8 位，`slug` 来自输入的首行（截断到 32 字符并做文件名安全化）。
-- 根目录由 `--traj-dir` 决定，默认 `~/.llmcli/traj`。
-- 存放位置只由命令行决定，不读任何环境变量。
+- 根目录优先级 `--traj-dir` → `llmcli.json` 的 `traj_dir` → `<config-dir>/traj` → `~/.llmcli/traj`。
+- 存放位置只由命令行 / 配置文件决定，不读任何环境变量。
 
 ```bash
 llmcli --traj-dir ./.local/traj --traj work --model ... --api-key ... "..."

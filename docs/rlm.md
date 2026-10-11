@@ -375,8 +375,9 @@ llmcli skills                      # 等价 bin/skills
 {"step_id":"1f3a...","ts":"2026-10-10T12:00:00+08:00","type":"reasoning","run_id":"1f3a...","thought":"先看一下。","cmd":"ls -la"}
 ```
 
-- `--traj-dir` / `--config-dir` 决定存放位置，**只由命令行决定，不读环境变量**（沿用现有约定）。
-  `--config-dir` 目前仅派生 `<config-dir>/traj`；保留为将来配置文件 / 临时文件的根目录。
+- `--traj-dir` / 配置的 `traj_dir` / `--config-dir` 决定存放位置，**只由命令行或 `llmcli.json`
+  决定，不读环境变量**（沿用现有约定）。`--config-dir` 同时是 `llmcli.json` 与派生
+  `<config-dir>/traj` 的根目录（见 9；配置文件细节见 [config.md](config.md)）。
 - 旧 `.llmcli/sessions/*.jsonl` 读取时做一次性映射（见 4.1）。
 
 ---

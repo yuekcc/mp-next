@@ -52,6 +52,8 @@ fn int run_entry(String[] args)
 {
 	cli::ParseResult parsed = cli::resolve(args);
 	trajectory::configure(parsed.ctx.traj_dir, parsed.ctx.config_dir);
+	// resolve 里已按 flag 初始化过日志（让配置加载期的告警也听 --quiet）；这里用配置回填后的
+	// 最终值再初始化一次，使配置里的 debug / no_color 生效。
 	log::init(parsed.ctx.quiet, parsed.ctx.debug, parsed.ctx.no_color);
 	log::add_secret(parsed.ctx.api_key);
 
@@ -211,11 +213,16 @@ fn int main(String[] args)
 	if (args.len >= 2 && is_command(args[1]))
 	{
 		String cmd = args[1];
-		// 子命令也认 --traj-dir / --config-dir（CLI flag 知识集中在 cli.c3）；这两个 flag
-		// 及值从子命令参数里摘掉，剩下的才是 verb 与位置参数。
-		String[] tail = cli::configure_trajectory(args[2..]);
-		if (cmd == "traj") return run_traj(tail);
-		if (cmd == "context") return run_context(tail);
+		// 子命令也认 --traj-dir / --config-dir / --no-config，并吃配置里的 traj_dir
+		// （CLI flag 知识集中在 cli.c3）；这些 flag 及值从子命令参数里摘掉，剩下的才是 verb 与位置参数。
+		cli::TrajArgs cfg = cli::configure_trajectory(args[2..]);
+		if (cfg.error.len)
+		{
+			log::error("%s", cfg.error);
+			return cli::EXIT_USAGE;
+		}
+		if (cmd == "traj") return run_traj(cfg.rest);
+		if (cmd == "context") return run_context(cfg.rest);
 		return list_skills();
 	}
 	return run_entry(args);

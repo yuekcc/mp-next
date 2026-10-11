@@ -15,6 +15,7 @@
 | File | Role |
 |------|------|
 | `src/cli.c3` | `Ctx`（一次 run 的全部配置）、`parse`/`resolve`、`HELP` 文本 |
+| `src/config.c3` | 持久配置 `llmcli.json` 的定位 / 读取 / 解析（独立于 `Ctx` 的中间结构，合并由 cli 做） |
 | `src/agent.c3` | RLM 主循环：`extract_code`（bash + heredoc）、空响应重试、stall guard、子代理 fork/merge |
 | `src/context.c3` | `Trajectory -> Message[]` 渲染：`RenderPolicy`、角色映射、head/tail/pin、分层截断 |
 | `src/trajectory.c3` | 步骤日志（唯一真相源）：`Step`/`Trajectory`、append、读回、fork/merge、blob spill |
@@ -62,11 +63,13 @@
 这些是代码注释与 PRD 都强调过的取舍，改坏了会让回归挂掉：
 
 - **`parse()` 是纯解析**：只看 argv，不读 stdin、不读文件；`--help` / `--print-system-prompt`
-  必须在碰 stdin 之前短路返回，否则在终端里会阻塞等输入。I/O（读文件、读管道）只在 `resolve()` 里发生。
+  必须在碰 stdin 之前短路返回，否则在终端里会阻塞等输入。I/O（读文件、读管道）只在 `resolve()`
+  与子命令的 `configure_trajectory()` 里发生（后者读 `llmcli.json` 取 `traj_dir`）。
 - **输入三选一**：`-p` / 位置参数 / `--input-file` 互斥；都不给则读 stdin 管道。显式输入存在时
   忽略 stdin（子代理的 stdin 被父进程接 `/dev/null`）。
 - **命令名必须是第一个参数**：`llmcli traj list` 才派发；命令名（traj/context/skills）是保留字，
-  同名任务用 `-p`。目录 flag（`--traj-dir`/`--config-dir`）的扫描集中在 `cli::configure_trajectory`。
+  同名任务用 `-p`。目录 flag（`--traj-dir`/`--config-dir`/`--no-config`）与配置里 `traj_dir` 的扫描
+  集中在 `cli::configure_trajectory`（返回 `TrajArgs`，坏配置上抛）。
 - **`Ctx` 字段必须归入五节之一**：初始设置 / 本次运行边界 / 解析中间量 / 日志开关 / 动作开关。
 - **trajectory 是唯一真相源**：每轮 messages 由 `context::render(traj)` 重渲染；内存不累加权威副本。
 - **`reasoning_content` 只入存档、绝不回传端点**：`chat.c3` 的 request / archive 两条序列化路径已分开；
@@ -80,7 +83,8 @@
 ## Patterns to Follow
 
 - 新增/修改 CLI 行为：先改 `src/cli.c3` 的 `parse` 与 `HELP`，再让 `resolve` 补齐 I/O，最后动
-  `agent` / `runtime`。
+  `agent` / `runtime`。新增可持久化的 flag 时，同步 `parse` 的 presence（`Seen`）与
+  `config.c3` 的已知键 + `apply_config`，并把优先级（默认 < 配置 < flag）写进 `HELP` / README。
 - 复现某种 LLM 行为：在 `scripts/mock_llm.py` 加 scenario（`--replace` 可替换 `{{...}}` 占位符；
   条目结构与内置 scenario 见文件顶部 docstring），不要改 `scripts/regress.py` 去适配。
 
