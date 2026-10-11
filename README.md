@@ -62,13 +62,13 @@ llmcli skills                   # 列出本机可用 skill
 
 命令名必须是第一个参数，无需软链/别名。
 
-## 子 run
+## 子代理
 
-生成代码里再调用一次本二进制就是子 run，用 `-p` 给任务（父轨迹会记 `fork`/`merge`）：
+生成代码里再调用一次本二进制就是子代理，用 `-p` 给任务（父轨迹会记 `fork`/`merge`）：
 
 ```bash
 llmcli -p "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
-  --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
+  --api-key "$API_KEY" --api-url "$API_URL" > 子代理.log 2>&1 &
 ```
 
 ## 测试

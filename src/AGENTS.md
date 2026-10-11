@@ -15,7 +15,7 @@
 | File | Role |
 |------|------|
 | `src/cli.c3` | `Ctx`（一次 run 的全部配置）、`parse`/`resolve`、`HELP` 文本 |
-| `src/agent.c3` | RLM 主循环：`extract_code`（bash + heredoc）、空响应重试、stall guard、子 run fork/merge |
+| `src/agent.c3` | RLM 主循环：`extract_code`（bash + heredoc）、空响应重试、stall guard、子代理 fork/merge |
 | `src/context.c3` | `Trajectory -> Message[]` 渲染：`RenderPolicy`、角色映射、head/tail/pin、分层截断 |
 | `src/trajectory.c3` | 步骤日志（唯一真相源）：`Step`/`Trajectory`、append、读回、fork/merge、blob spill |
 | `src/llm.c3` | OpenAI 兼容调用入口（组装 system + messages → POST → 解析） |
@@ -64,7 +64,7 @@
 - **`parse()` 是纯解析**：只看 argv，不读 stdin、不读文件；`--help` / `--print-system-prompt`
   必须在碰 stdin 之前短路返回，否则在终端里会阻塞等输入。I/O（读文件、读管道）只在 `resolve()` 里发生。
 - **输入三选一**：`-p` / 位置参数 / `--input-file` 互斥；都不给则读 stdin 管道。显式输入存在时
-  忽略 stdin（子 run 的 stdin 被父进程接 `/dev/null`）。
+  忽略 stdin（子代理的 stdin 被父进程接 `/dev/null`）。
 - **命令名必须是第一个参数**：`llmcli traj list` 才派发；命令名（traj/context/skills）是保留字，
   同名任务用 `-p`。目录 flag（`--traj-dir`/`--config-dir`）的扫描集中在 `cli::configure_trajectory`。
 - **`Ctx` 字段必须归入五节之一**：初始设置 / 本次运行边界 / 解析中间量 / 日志开关 / 动作开关。

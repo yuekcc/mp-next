@@ -144,7 +144,7 @@ fn void traj_print_steps(trajectory::Step[] steps, bool full) @private
 	}
 }
 
-// 列轨迹并标注 fork/merge 子关系（供父 run 观察子 run）。
+// 列轨迹并标注 fork/merge 子关系（供父 run 观察子代理）。
 fn int list_children()
 {
 	trajectory::TrajectorySummary[] items = trajectory::list_all(mem);
@@ -207,7 +207,7 @@ fn int run_context_for(String name) @private
 fn int main(String[] args)
 {
 	// 命令名必须是第一个参数：`llmcli traj list`。命中则派发，其余都是一次运行
-	// （生成代码起子 run 就是 `llmcli -p "<task>"`）。
+	// （生成代码起子代理就是 `llmcli -p "<task>"`）。
 	if (args.len >= 2 && is_command(args[1]))
 	{
 		String cmd = args[1];

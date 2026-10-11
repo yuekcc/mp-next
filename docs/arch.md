@@ -102,7 +102,7 @@ graph TD
 |------|------|----------|
 | `cmd/llmcli.c3` | `main`：子命令派发 → run；动作短路；列出轨迹/skill、`traj`/`context` 子命令 | `main` |
 | `src/cli.c3` | `Ctx`、`parse`（纯解析）、`resolve`（补 I/O）、`assemble_system_prompt`、`HELP`、退出码常量 | `resolve`, `parse` |
-| `src/agent.c3` | RLM 全部：主循环、`extract_code`（bash + heredoc）、空响应重试、stall guard、子 run fork/merge | `run`, `extract_code` |
+| `src/agent.c3` | RLM 全部：主循环、`extract_code`（bash + heredoc）、空响应重试、stall guard、子代理 fork/merge | `run`, `extract_code` |
 | `src/context.c3` | 把 `Trajectory` 渲染成 `Message[]`：head/tail/pin、角色映射、分层截断、`max_bytes`、run 作用域 | `render`, `default_policy` |
 | `src/trajectory.c3` | 步骤日志：`Step`/`Trajectory`、append、读回、fork/merge、blob spill、旧格式映射 | `open_new`, `append`, `read_all` |
 | `src/llm.c3` | OpenAI 兼容调用入口（组装 system + messages → POST → 解析） | `Llm.call` |
@@ -125,7 +125,7 @@ graph TD
 
 1. `main`——命令名必须是第一个参数：`is_command(args[1])` 命中时走子命令派发
    （`traj`/`context`/`skills`，先 `cli::configure_trajectory` 认目录 flag），否则走一次真实运行。
-   子 run 就是生成代码再跑一次 `llmcli -p "<task>"`。
+   子代理就是生成代码再跑一次 `llmcli -p "<task>"`。
 2. 真实运行 `run_entry`：`cli::resolve(args)` → `trajectory::configure` → `log::init` /
    `log::add_secret` → 动作短路（`--help` / 用法错误 / `--print-system-prompt`）→
    `runtime::install_interrupt_handler()` → `http::http_init()` → `agent::run(&ctx)`。
@@ -165,7 +165,7 @@ stateDiagram-v2
 - **多代码块**：只执行第一个，`log::warn` 告警。
 - **执行后有 `FINAL`**：写 `final` 步骤，`print_answer(final_answer)`，`EXIT_OK`。
 - **stall guard**：连续 5 次非零退出、或同一失败命令重复 3 次 → `error` + `EXIT_UNCONVERGED`。
-- **子 run**：本进程若由父进程交代了 `$LLMCLI_PARENT_TRAJ_*`，`run` 结束时在父轨迹写 `merge`。
+- **子代理**：本进程若由父进程交代了 `$LLMCLI_PARENT_TRAJ_*`，`run` 结束时在父轨迹写 `merge`。
 
 ### 3.3 落盘时机
 
@@ -232,7 +232,7 @@ stateDiagram-v2
 
 **stall guard**：连续 5 次非零退出、或同一失败命令重复 3 次 → `error` 步骤 + 退出码 3。
 
-**子 run**：本进程若由父进程交代了 `$LLMCLI_PARENT_TRAJ_DIR` / `$LLMCLI_PARENT_TRAJ_ID`，`run` 开头
+**子代理**：本进程若由父进程交代了 `$LLMCLI_PARENT_TRAJ_DIR` / `$LLMCLI_PARENT_TRAJ_ID`，`run` 开头
 在父轨迹写 `fork`、结束时写 `merge`；自己的轨迹也放进父轨迹根目录。
 
 **内存策略**（见 `agent.c3` 顶部注释）：消息是投影不是状态——每轮从 trajectory 重渲染，进度不保存
@@ -418,11 +418,11 @@ reasoning 字符数、token 用量）；`--debug` 额外打印原始请求/响�
 | 层 | 位置 | 覆盖 |
 |----|------|------|
 | 单元测试 | `test/*_test.c3`（`c3c test`） | `extract_code`（bash + heredoc）、`cli` 解析/resolve、`chat` 序列化与解析、`context` 渲染策略、`trajectory`（append/读回/fork/merge/spill/旧格式）、`skill`、`buf` |
-| 端到端回归 | `scripts/regress.py` + `scripts/mock_llm.py` | 真实二进制对着**离线 mock 端点**跑完整 run：stdout 纯净度、退出码、轨迹落盘、子 run fork/merge、空闲看门狗、中断、`--max-iterations`、`traj`/`context` 子命令 |
+| 端到端回归 | `scripts/regress.py` + `scripts/mock_llm.py` | 真实二进制对着**离线 mock 端点**跑完整 run：stdout 纯净度、退出码、轨迹落盘、子代理 fork/merge、空闲看门狗、中断、`--max-iterations`、`traj`/`context` 子命令 |
 
 `scripts/mock_llm.py` 是本地 mock OpenAI 服务，按"脚本"依次返回各轮模型回复；内置 scenario
 覆盖单轮、bash 代码循环、设置 FINAL、读改文件、reasoning、坏 JSON、HTTP 500、空答案、慢命令、
-空闲命令、子 run、同一轨迹两轮代码、永不收敛等。回归对 stdout 纯净度与"已生成代码 100% 在 stderr
+空闲命令、子代理、同一轨迹两轮代码、永不收敛等。回归对 stdout 纯净度与"已生成代码 100% 在 stderr
 可见"有断言。
 
 **约定**：复现某种 LLM 行为时，在 `mock_llm.py` 加 scenario，不要改 `regress.py` 去适配。

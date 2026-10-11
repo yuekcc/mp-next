@@ -153,7 +153,7 @@ def s1_help(mock):
           ".llmcli" in proc.stdout and "风险提示" in proc.stdout)
     check("S1 --help：说明 FINAL / FINAL_FILE 报捷", "FINAL" in proc.stdout, proc.stdout[:200])
     check("S1 --help：说明子命令", "traj" in proc.stdout and "context" in proc.stdout)
-    check("S1 --help：说明子 run 用法", "-p" in proc.stdout and "子任务" in proc.stdout,
+    check("S1 --help：说明子代理用法", "-p" in proc.stdout and "子任务" in proc.stdout,
           proc.stdout[-500:])
     check("S1 --help：说明 -p prompt", "--prompt" in proc.stdout, proc.stdout[:600])
     check("S1 --help：无 argv[0] 派发表述", "argv[0]" not in proc.stdout, proc.stdout[-400:])
@@ -496,7 +496,7 @@ def s3_trajectory(mock, verbose):
 
 
 def s3_sub_run():
-    """AC: 生成代码显式起子 run，父轨迹记 fork/merge。"""
+    """AC: 生成代码显式起子代理，父轨迹记 fork/merge。"""
     root = os.path.join(WORK, "s3_sub_traj")
     shutil.rmtree(root, ignore_errors=True)
     child = Mock("simple", port=PORT + 31)
@@ -511,8 +511,8 @@ def s3_sub_run():
         parent.reset()
         proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", parent.base_url,
                         "--traj-dir", root], stdin_text="父任务", traj_dir=root, timeout=60)
-        check("S3 子 run：父退出码 0", proc.returncode == 0, proc.stderr)
-        check("S3 子 run：stdout 为父最终答案", proc.stdout.strip() == "parent done", repr(proc.stdout))
+        check("S3 子代理：父退出码 0", proc.returncode == 0, proc.stderr)
+        check("S3 子代理：stdout 为父最终答案", proc.stdout.strip() == "parent done", repr(proc.stdout))
 
         groups = read_steps(root)
         parent_steps = None
@@ -523,17 +523,17 @@ def s3_sub_run():
                 parent_steps = steps
             if "final" in types and "fork" not in types:
                 child_found = True
-        check("S3 子 run：父轨迹有 fork 步骤",
+        check("S3 子代理：父轨迹有 fork 步骤",
               parent_steps is not None and "fork" in step_types(parent_steps),
               str({k: step_types(v) for k, v in groups.items()}))
-        check("S3 子 run：父轨迹有 merge 步骤",
+        check("S3 子代理：父轨迹有 merge 步骤",
               parent_steps is not None and "merge" in step_types(parent_steps),
               str({k: step_types(v) for k, v in groups.items()}))
-        check("S3 子 run：存在独立的子轨迹", child_found and len(groups) >= 2, str(list(groups.keys())))
+        check("S3 子代理：存在独立的子轨迹", child_found and len(groups) >= 2, str(list(groups.keys())))
         if parent_steps:
             fork = [s for s in parent_steps if s.get("type") == "fork"][0]
             merge = [s for s in parent_steps if s.get("type") == "merge"][0]
-            check("S3 子 run：fork.child == merge.from_traj",
+            check("S3 子代理：fork.child == merge.from_traj",
                   fork.get("child") == merge.get("from_traj"),
                   "%s vs %s" % (fork.get("child"), merge.get("from_traj")))
     finally:

@@ -292,7 +292,7 @@ fn ParseResult parse(String[] args)
 	//   1) 显式来源（-p / 位置参数 / --input-file）优先；同时给多个才是用法错误。
 	//   2) 都没给时，stdin 是管道则用管道内容（isatty 只问一句，不读内容）。
 	//   3) 都没给、stdin 也不是管道 → 缺输入。
-	// 显式来源存在时不看 stdin：这样生成代码起子 run 用的 `llmcli -p "<task>"`（其 stdin 被父
+	// 显式来源存在时不看 stdin：这样生成代码起子代理用的 `llmcli -p "<task>"`（其 stdin 被父
 	// 进程接 /dev/null、非 tty）不会被误判成"输入 + stdin 管道"冲突。
 	usz explicit_count = (usz)((o.prompt.len ? 1 : 0) + (o.input_file.len ? 1 : 0));
 	if (explicit_count > 1)
@@ -516,7 +516,7 @@ const String HELP = `llmcli - 把 LLM 接进 shell 流水线
 trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
 
 输入（-p / 位置参数 / --input-file 三选一，不能同时给；都不给时读 stdin 管道）：
-  -p, --prompt <text>      显式 prompt（推荐用于脚本 / 子 run：任务名撞子命令也不歧义）
+  -p, --prompt <text>      显式 prompt（推荐用于脚本 / 子代理：任务名撞子命令也不歧义）
   <prompt>                 位置参数，直接写在命令行上
   --input-file <file>      从文件读取（UTF-8）
   stdin                    管道输入，如 cat x.md | llmcli ...（未给上面三者时才用）
@@ -558,10 +558,10 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
   llmcli context [--traj <name>]  打印渲染出的 messages
   llmcli skills             列出本机可用 skill
 
-子 run：生成代码里再调用一次本二进制就是子 run，用 -p 给任务最稳（父轨迹会记 fork/merge）：
+子代理：生成代码里再调用一次本二进制就是子代理，用 -p 给任务最稳（父轨迹会记 fork/merge）：
 
   llmcli -p "<子任务>" --traj-dir "$TRAJ_DIR" --model "$MODEL" \
-    --api-key "$API_KEY" --api-url "$API_URL" > 子run.log 2>&1 &
+    --api-key "$API_KEY" --api-url "$API_URL" > 子代理.log 2>&1 &
 
 退出码：
   0  成功

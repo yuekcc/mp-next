@@ -93,11 +93,11 @@ fn int run(cli::Ctx* ctx)
 		.content = ctx.user_input,
 	});
 
-	// 把轨迹坐标作为环境变量暴露给生成代码（$TRAJ_DIR/$TRAJ_ID），供自省与起子 run。
+	// 把轨迹坐标作为环境变量暴露给生成代码（$TRAJ_DIR/$TRAJ_ID），供自省与起子代理。
 	st.executor.vars = prepend_traj_vars(&st.traj, ctx);
 
-	// 子 run（doc 7）：若父进程通过 LLMCLI_PARENT_TRAJ_* 交代了父轨迹，则本进程是一条
-	// 子 run——在父轨迹上写 fork 步骤，结束时写 merge。
+	// 子代理（doc 7）：若父进程通过 LLMCLI_PARENT_TRAJ_* 交代了父轨迹，则本进程是一条
+	// 子代理——在父轨迹上写 fork 步骤，结束时写 merge。
 	register_parent(&st);
 
 	String scope_note = ctx.context_scope.len ? string::tformat("，scope=%s", ctx.context_scope) : "";
@@ -114,7 +114,7 @@ fn int run(cli::Ctx* ctx)
 	return rc;
 }
 
-// 父轨迹坐标（子 run 用）：非空则本进程是子 run。
+// 父轨迹坐标（子代理用）：非空则本进程是子代理。
 String parent_root @private;
 String parent_name @private;
 
@@ -126,14 +126,14 @@ fn void register_parent(RunState* st) @private
 	parent_root = proot.copy(mem);
 	parent_name = pname.copy(mem);
 
-	// 在父轨迹写 fork 步骤，child = 本子 run 的 id。
+	// 在父轨迹写 fork 步骤，child = 本子代理的 id。
 	trajectory::Trajectory parent = trajectory::open_at(parent_root, parent_name);
 	trajectory::append(&parent, {
 		.type = trajectory::T_FORK,
 		.child = st.traj.id,
 		.slug = st.traj.name,
 	});
-	log::info("本进程为子 run，已在父轨迹 %s 写 fork 步骤", parent_name);
+	log::info("本进程为子代理，已在父轨迹 %s 写 fork 步骤", parent_name);
 }
 
 fn void write_merge(RunState* st) @private
@@ -312,7 +312,7 @@ fn bool stall_guard(RunState* st, runtime::ExecResult* exec, String code)
 fn trajectory::Trajectory open_trajectory(cli::Ctx* ctx) @private
 {
 	// 存放位置只由命令行决定（--traj-dir，见 doc 8），不因环境变量改根。
-	// 子 run 的父指针（$LLMCLI_PARENT_TRAJ_*）只用于在父轨迹写 fork/merge，见 register_parent。
+	// 子代理的父指针（$LLMCLI_PARENT_TRAJ_*）只用于在父轨迹写 fork/merge，见 register_parent。
 	if (ctx.traj_id.len)
 	{
 		return trajectory::open_resume(ctx.traj_id);
@@ -357,10 +357,10 @@ fn String[] prepend_traj_vars(trajectory::Trajectory* traj, cli::Ctx* ctx) @priv
 	all.init(mem);
 	all.push(string::format(mem, "TRAJ_DIR=%s", traj.root));
 	all.push(string::format(mem, "TRAJ_ID=%s", traj.name));
-	// 父轨迹坐标：生成代码若起子 run（`llmcli "..."`），子进程据此在父轨迹写 fork/merge。
+	// 父轨迹坐标：生成代码若起子代理（`llmcli "..."`），子进程据此在父轨迹写 fork/merge。
 	all.push(string::format(mem, "LLMCLI_PARENT_TRAJ_DIR=%s", traj.root));
 	all.push(string::format(mem, "LLMCLI_PARENT_TRAJ_ID=%s", traj.name));
-	// 凭据与端点：子 run 是"再跑一次 llmcli"，需要它们才能重连同一端点。
+	// 凭据与端点：子代理是"再跑一次 llmcli"，需要它们才能重连同一端点。
 	all.push(string::format(mem, "MODEL=%s", ctx.model));
 	all.push(string::format(mem, "API_KEY=%s", ctx.api_key));
 	all.push(string::format(mem, "API_URL=%s", ctx.api_url));

@@ -113,11 +113,11 @@ SCENARIOS = {
         {"finish_reason": "stop", "content": "```bash\nsleep 600\n```"},
         {"finish_reason": "stop", "content": "done idle"},
     ],
-    # 子 run：生成代码显式再跑一次 llmcli，用 -p 给任务（避免任务名撞子命令）。
+    # 子代理：生成代码显式再跑一次 llmcli，用 -p 给任务（避免任务名撞子命令）。
     # {{LLMCLI}}/{{APIKEY}}/{{APIURL}}/{{TRAJDIR}} 由回归替换。
     "sub_run": [
         {"finish_reason": "stop",
-         "content": "起一个子 run。\n```bash\n'{{LLMCLI}}' -p \"子任务\" --model any --api-key '{{APIKEY}}' --api-url '{{APIURL}}' --traj-dir '{{TRAJDIR}}' > /dev/null 2>&1\nFINAL=\"parent done\"\n```"},
+         "content": "起一个子代理。\n```bash\n'{{LLMCLI}}' -p \"子任务\" --model any --api-key '{{APIKEY}}' --api-url '{{APIURL}}' --traj-dir '{{TRAJDIR}}' > /dev/null 2>&1\nFINAL=\"parent done\"\n```"},
     ],
 }
 

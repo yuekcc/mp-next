@@ -140,7 +140,7 @@ fn Trajectory open_resume(String name)
 	return traj;
 }
 
-// 从父 run 的轨迹目录直接打开（子 run 用它写 fork/merge）。
+// 从父 run 的轨迹目录直接打开（子代理用它写 fork/merge）。
 fn Trajectory open_at(String root, String name)
 {
 	Trajectory traj;

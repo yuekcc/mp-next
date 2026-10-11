@@ -39,7 +39,7 @@ llmcli traj list
 | `feedback` | user | `content` | 看门狗杀进程时给出的结构化反馈 |
 | `final` | assistant | `content` | 最终答案 |
 | `error` | — | `content`, `reason` | 中止原因（stall / max-iterations 等） |
-| `fork` / `merge` | — | `child` / `from_traj` | 子 run 的 DAG 引用 |
+| `fork` / `merge` | — | `child` / `from_traj` | 子代理的 DAG 引用 |
 | `shellm-run` / `run-summary` | 排除 | — | 记账步骤，永不进上下文 |
 ```json
 {"step_id":"1f3a...","ts":"2026-10-10T12:00:00+08:00","type":"reasoning","run_id":"9c2b...","thought":"先看一下。","cmd":"ls -la"}

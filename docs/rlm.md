@@ -2,7 +2,7 @@
 
 本文描述 llmcli 的 **shellm 等价实现**：一个**单二进制、进程内对象**架构的 Recursive Language
 Model (RLM) 引擎——模型写 bash 代码、本地执行、输出回填，循环直到代码设置 `FINAL` /
-`FINAL_FILE`；同时具备 shellm 的 trajectory、context 渲染、自省与递归子 run 能力。
+`FINAL_FILE`；同时具备 shellm 的 trajectory、context 渲染、自省与递归子代理能力。
 
 阅读前提：[arch.md](arch.md) 是按现状重写的架构文档，本文补 RLM 引擎的设计意图与取舍；轨迹文件
 格式见 [sessions.md](sessions.md)。
@@ -27,7 +27,7 @@ Model (RLM) 引擎——模型写 bash 代码、本地执行、输出回填，�
 - LLM 调用（`Llm`），仅支持 OpenAI chat completions 兼容端点（现有能力）。
 - 生成代码执行器（`Executor`）——bash，含止损看门狗与 `FINAL` 捕获。
 - 技能（`SkillHub`）。
-- 子 run 与自省：单二进制的子命令派发。
+- 子代理与自省：单二进制的子命令派发。
 - CLI 表面 + trajectory 落盘格式。
 
 **非目标（后置）**：
@@ -81,7 +81,7 @@ C3 是单进程内多模块的程序：这些工具的状态（trajectory、mess
 | `bin/glob`/`view`/`put`/`sub` | `src/fs.c3` | **可选**：agent 面文件工具 |
 | — | `src/log.c3` / `buf.c3` / `winjob.c3` | **复用**（脱敏、截断、Job Object） |
 | — | `src/cli.c3` + `cmd/llmcli.c3` | **扩展**：shellm flag 集 + 子命令派发 |
-| `shellm-system-prompt.txt` 装配 | `src/cli.c3` 的 prompt 装配 + `src/system_prompt.md` | **扩展**：注入 trajectory/子 run 用法段 |
+| `shellm-system-prompt.txt` 装配 | `src/cli.c3` 的 prompt 装配 + `src/system_prompt.md` | **扩展**：注入 trajectory/子代理用法段 |
 
 ---
 
@@ -158,7 +158,7 @@ struct Step
 | `feedback` | user | `content` | 看门狗杀进程时给出的结构化反馈 |
 | `final` | assistant | `content` | 最终答案 |
 | `error` | — | `content`, `reason` | 中止原因（stall 等） |
-| `fork` / `merge` | — | `child` / `from_traj` | 子 run 的 DAG 引用 |
+| `fork` / `merge` | — | `child` / `from_traj` | 子代理的 DAG 引用 |
 | `shellm-run` / `run-summary` | 排除 | — | 记账步骤，永不进上下文 |
 
 **落盘时机**：沿用 `session.c3` 的「整步一次 write、append 原子」语义（`trajectory::append`）；中断/
@@ -329,19 +329,19 @@ thinking 作为 `assistant` 上下文回填 + 一句「继续」的 `user` 提�
 
 - **工作方式**：写 bash，输出可见，循环调用直到 `FINAL`。
 - **trajectory 与 context**：说明 `$TRAJ_DIR`/`$TRAJ_ID`、输出预算与截断桩、如何取回完整输出。
-- **子 run**：把起子 run 作为「最有力的工具」，给出后台执行 + 读文件的范式。
+- **子代理**：把起子代理作为「最有力的工具」，给出后台执行 + 读文件的范式。
 - **输出预算**：最新步骤的完整上限、旧步骤只留首尾的机制。
 
 > 这段提示词是产品的一部分，随能力一起进版本；`--help` / README / docs 三处同步（仓库约定）。
 
 ---
 
-## 7. 子命令与子 run（单二进制）
+## 7. 子命令与子代理（单二进制）
 
 生成代码要自省与递归时，调用的是**同一个二进制**。命令名必须是第一个参数：
 
 ```
-llmcli -p "<task>"                 # 起一个子 run（就是再跑一次 llmcli）
+llmcli -p "<task>"                 # 起一个子代理（就是再跑一次 llmcli）
 llmcli traj    show <id> --full    # 等价 bin/traj
 llmcli traj    list --children
 llmcli context --traj <id>         # 等价 bin/context
@@ -349,12 +349,12 @@ llmcli skills                      # 等价 bin/skills
 ```
 
 - **宿主部署**：就是一个文件，无需软链/别名或 argv[0] 派发。
-- **子 run**：`llmcli -p "<task>"` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
-  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子 run 进度。用 `-p` 是为了避开与
-  子命令名（traj/context/skills）的歧义；子 run 的 stdin 被父进程接 `/dev/null`，显式输入存在时
+- **子代理**：`llmcli -p "<task>"` 在自己的进程里跑同一套对象，轨迹上写 `fork` 步骤、结束时写
+  `merge`；父 run 用 `traj list --children` / `traj tail` 观察子代理进度。用 `-p` 是为了避开与
+  子命令名（traj/context/skills）的歧义；子代理的 stdin 被父进程接 `/dev/null`，显式输入存在时
   不再被当输入来源（见 4.4 与 §9 输入判定）。
 - **递归语义**：循环本身**不自调用**（任何一轮都只是 `Llm.call`）；递归只来自生成代码**显式**起
-  子 run。
+  子代理。
 
 ---
 
@@ -387,7 +387,7 @@ llmcli skills                      # 等价 bin/skills
 
 | Flag | 作用 |
 |------|------|
-| `-p, --prompt <text>` | 显式 prompt（与位置参数 / `--input-file` 三选一；子 run 推荐） |
+| `-p, --prompt <text>` | 显式 prompt（与位置参数 / `--input-file` 三选一；子代理推荐） |
 | `--max-iterations N` | 循环上限（0 或不给=不限） |
 | `--traj <id>` / `--resume` | 写入/续接既有轨迹 |
 | `--context-scope traj\|run` | 渲染范围（默认 traj） |
@@ -413,7 +413,7 @@ llmcli skills                      # 等价 bin/skills
 | 生成代码 | Python | bash |
 | 完成信号 | `FINAL`/`FINAL_FILE` | 同 |
 | 循环止损 | `--max-iterations` | max-iterations + 空闲/输出量/墙钟三看门狗 + stall guard |
-| 递归 | 无 | 显式子 run + fork/merge |
+| 递归 | 无 | 显式子代理 + fork/merge |
 | 自省 | 无 | `traj`/`context` 子命令 |
 | 工具形态 | 单二进制 | 单二进制（命令群靠自派发，仍是一个文件） |
 | 沙箱 | 无 | 非目标（后续） |
@@ -439,7 +439,7 @@ llmcli skills                      # 等价 bin/skills
    [arch.md](arch.md)。
 
 **测试**：单元测试覆盖 `extract_code`(bash + heredoc)、`Context.render`（角色/窗口/截断/预算）、
-`Trajectory`（append/load/fork/merge/spill/旧格式往返）；端到端回归扩到 trajectory 落盘、子 run
+`Trajectory`（append/load/fork/merge/spill/旧格式往返）；端到端回归扩到 trajectory 落盘、子代理
 fork/merge、空闲看门狗、`traj`/`context` 子命令（沿用 [ci.md](ci.md) 的离线 mock 端点思路）。
 
 ---
