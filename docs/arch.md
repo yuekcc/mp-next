@@ -28,6 +28,10 @@ llmcli 是一个**单二进制命令行工具**，把 LLM 接进 shell 流水线
 实现语言为 [C3](https://c3-lang.org/)，依赖 `lib/curl.c3l`（libcurl 绑定）与 `lib/cjson.c3l`（JSON）。
 `project.json` 定义可执行目标 `llmcli`（源 `src/**` + `cmd/llmcli.c3`）与测试源 `test/**`。
 
+仓库根另有 **Odin 重写**（`odin/`）：模块划分与本设计一一对应，运行时行为与可观测面（`--help`
+文本、轨迹 JSONL 字段、退出码、stdout 纯净度）与 C3 版一致；JSON 用 `core:encoding/json`，
+HTTP 用自带的 `vendor:curl`。地图与命令见 [../odin/AGENTS.md](../odin/AGENTS.md)。
+
 ---
 
 ## 2. 架构总览

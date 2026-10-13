@@ -165,9 +165,9 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 
 ### 阶段 9：端到端与文档
 - [x] S11 复用 `scripts/regress.py`（`LLMCLI_BIN` 指向 Odin 产物）跑通全部 146 项检查
-- [ ] 更新 `README.md`（新增 Odin 构建/测试段）、`docs/`（构建语言与目录）、根 `AGENTS.md`
-- [ ] 新增 `odin/AGENTS.md`（模块地图与硬约束）
-- [ ] 提交信息：简短一句话，中文为主
+- [x] 更新 `README.md`（新增 Odin 构建/测试段）、`docs/arch.md`（Odin 实现说明）、根 `AGENTS.md`
+- [x] 新增 `odin/AGENTS.md`（模块地图与硬约束）
+- [x] 提交信息：简短一句话，中文为主
 
 ## 7. 风险与备注
 

@@ -107,6 +107,19 @@ c3c test                       # 单元测试
 python scripts/regress.py      # 端到端回归（需先 c3c build）
 ```
 
+## Odin 实现
+
+仓库根另有 `odin/`：llmcli 的 Odin 重写。运行时行为与可观测面（`--help` 文本、轨迹 JSONL
+字段、退出码、stdout 纯净度）与 C3 版一致；模块划分与 C3 版一一对应，按 Odin 惯例收在单包 `main`。
+
+```bash
+odin build odin -out:build/llmcli-odin.exe                            # 构建（产物 build/llmcli-odin.exe）
+bash scripts/odin-test.sh                                             # 单元测试
+LLMCLI_BIN="$(pwd)/build/llmcli-odin.exe" python scripts/regress.py   # 端到端回归（复用同一套场景）
+```
+
+模块地图与硬约束见 [odin/AGENTS.md](odin/AGENTS.md)，工作计划见 [odin/TODO.md](odin/TODO.md)。
+
 ## 文档
 
 - [docs/arch.md](docs/arch.md) — 架构设计（RLM loop、模块结构与设计取舍）

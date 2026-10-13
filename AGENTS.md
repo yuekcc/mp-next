@@ -19,6 +19,7 @@ shellm 式 RLM loop。用法、参数、构建/测试命令与风险提示见 [R
 ```
 cmd/llmcli.c3     → main：子命令派发（traj/context/skills）+ 一次 run/子代理
 src/              → 实现模块，逐文件地图见 src/AGENTS.md
+odin/             → llmcli 的 Odin 重写（单包 main，行为等价）；地图见 odin/AGENTS.md
 test/*_test.c3    → @test 单元测试（命令见 README）
 scripts/          → mock_llm.py（离线假端点）、regress.py（端到端回归）
 docs/arch.md      → 架构设计（RLM loop、模块结构与设计取舍）
@@ -34,6 +35,7 @@ lib/              → c3l 预编译依赖：curl、cjson
 ## Scoped AGENTS.md
 
 - [src/AGENTS.md](./src/AGENTS.md) — 模块地图、设计硬约束、协议/平台约定；改 `src/` 前必读。
+- [odin/AGENTS.md](./odin/AGENTS.md) — Odin 重写的模块地图、命令与 Odin 特有坑；改 `odin/` 前必读。
 
 ## 全局约定
 
