@@ -27,6 +27,11 @@ RESULTS = []
 
 
 def exe_path():
+    override = os.environ.get("LLMCLI_BIN")
+    if override:
+        if os.path.exists(override):
+            return override
+        sys.exit("LLMCLI_BIN 指向的文件不存在：%s" % override)
     for name in ("llmcli.exe", "llmcli"):
         path = os.path.join(ROOT, "build", name)
         if os.path.exists(path):

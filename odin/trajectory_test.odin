@@ -50,6 +50,22 @@ trajectory_append_read_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
+trajectory_file_starts_with_valid_header :: proc(t: ^testing.T) {
+	dir, ok := make_temp_traj_dir(t)
+	if !ok {
+		return
+	}
+	defer free_all(context.temp_allocator)
+	defer os.remove_all(dir)
+	traj_set_base_dir(dir)
+
+	traj := traj_open_new("header")
+	raw, _ := os.read_entire_file_from_path(traj.path, context.temp_allocator)
+	first_line := strings.split(string(raw), "\n", context.temp_allocator)[0]
+	testing.expect_value(t, first_line, `{"type":"trajectory"}`)
+}
+
+@(test)
 trajectory_spills_large_fields_to_blob :: proc(t: ^testing.T) {
 	dir, ok := make_temp_traj_dir(t)
 	if !ok {

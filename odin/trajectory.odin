@@ -225,7 +225,7 @@ write_header :: proc(traj: ^Trajectory) {
 		return
 	}
 	defer os.close(f)
-	line := fmt.aprintf("{\"type\":\"%s\"}\n", TRAJ_HEADER_TYPE, allocator = context.temp_allocator)
+	line := fmt.aprintf("{{\"type\":\"%s\"}}\n", TRAJ_HEADER_TYPE, allocator = context.temp_allocator)
 	_, _ = os.write(f, transmute([]byte)line)
 }
 

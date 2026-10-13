@@ -144,8 +144,8 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [x] `HELP` 文本（与现有 `--help` 等价）
 
 ### 阶段 5：HTTP + LLM
-- [ ] `http`：`http_init`/`http_deinit`/`http_post_json`（vendor:curl）
-- [ ] `llm.call`：system 前置 + 请求 + 解析 + 错误可读
+- [x] `http`：`http_init`/`http_deinit`/`http_post_json`（vendor:curl）
+- [x] `llm.call`：system 前置 + 请求 + 解析 + 错误可读
 
 ### 阶段 6：bash 执行器
 - [x] S9 `Executor`：脚本包装（set -e、cd、export、set -x、FINAL/FINAL_FILE 捕获、exit rc）
@@ -155,16 +155,16 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [x] 中断处理器（SIGINT/SIGBREAK/SIGTERM → 杀子进程 + 退出 130）
 
 ### 阶段 7：RLM 主循环
-- [ ] S10 `agent.run`：建轨迹、写 shellm-run/prompt、每轮 render→call→extract→exec→append
-- [ ] 空响应重试（≤8）、stall guard（连续 5 / 重复 3）、max-iterations → 退出码 3
-- [ ] 子代理：`LLMCLI_PARENT_TRAJ_*` → 父轨迹写 fork/merge；注入 `$TRAJ_DIR`/`$TRAJ_ID`/`$MODEL`/`$API_KEY`/`$API_URL`
+- [x] S10 `agent.run`：建轨迹、写 shellm-run/prompt、每轮 render→call→extract→exec→append（由 S11 端到端覆盖）
+- [x] 空响应重试（≤8）、stall guard（连续 5 / 重复 3）、max-iterations → 退出码 3
+- [x] 子代理：`LLMCLI_PARENT_TRAJ_*` → 父轨迹写 fork/merge；注入 `$TRAJ_DIR`/`$TRAJ_ID`/`$MODEL`/`$API_KEY`/`$API_URL`
 
 ### 阶段 8：skill + 子命令
 - [x] S8 `skill`：发现、front matter 解析、排序、`print_installed`/`print_brief`
-- [ ] `main` 子命令派发：`traj list/show/tail/search [--children/--full]`、`context [--traj]`、`skills`
+- [x] `main` 子命令派发：`traj list/show/tail/search [--children/--full]`、`context [--traj]`、`skills`
 
 ### 阶段 9：端到端与文档
-- [ ] S11 `scripts/regress-odin.sh` 对接 `mock_llm.py`，覆盖 arch.md 第 8 节各场景
+- [x] S11 复用 `scripts/regress.py`（`LLMCLI_BIN` 指向 Odin 产物）跑通全部 146 项检查
 - [ ] 更新 `README.md`（新增 Odin 构建/测试段）、`docs/`（构建语言与目录）、根 `AGENTS.md`
 - [ ] 新增 `odin/AGENTS.md`（模块地图与硬约束）
 - [ ] 提交信息：简短一句话，中文为主
