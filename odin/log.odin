@@ -48,6 +48,11 @@ log_add_secret :: proc(secret: string) {
 	g_secret_count += 1
 }
 
+// stdin 是否终端（parse 判断“有没有管道输入”时只问这一句，不读内容）。
+is_stdin_terminal :: proc() -> bool {
+	return terminal.is_terminal(os.stdin)
+}
+
 // 密钥脱敏：形如 sk-1234 -> sk-***234。短于/等于 6 位直接全遮。
 mask_secret :: proc(secret: string) -> string {
 	if len(secret) <= 6 {

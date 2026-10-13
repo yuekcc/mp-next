@@ -138,10 +138,10 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [x] `render`：过滤（exclude/run 作用域）、head/tail/pin 窗口、角色映射、分层截断、max_bytes 折半
 
 ### 阶段 4：配置 + CLI 解析
-- [ ] S7 `config.load`（JSON→Settings，含已知键/类型校验/未知键告警）
-- [ ] S6 `cli.parse`（纯解析：输入三选一、动作短路、flag 校验、`TrajArgs` 扫描）
-- [ ] `cli.resolve`（配置合并、读文件、读 stdin、装配系统提示词）
-- [ ] `HELP` 文本（与现有 `--help` 等价）
+- [x] S7 `config.load`（JSON→Settings，含已知键/类型校验/未知键告警）
+- [x] S6 `cli.parse`（纯解析：输入三选一、动作短路、flag 校验、`TrajArgs` 扫描）
+- [x] `cli.resolve`（配置合并、读文件、读 stdin、装配系统提示词）
+- [x] `HELP` 文本（与现有 `--help` 等价）
 
 ### 阶段 5：HTTP + LLM
 - [ ] `http`：`http_init`/`http_deinit`/`http_post_json`（vendor:curl）
@@ -160,7 +160,7 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [ ] 子代理：`LLMCLI_PARENT_TRAJ_*` → 父轨迹写 fork/merge；注入 `$TRAJ_DIR`/`$TRAJ_ID`/`$MODEL`/`$API_KEY`/`$API_URL`
 
 ### 阶段 8：skill + 子命令
-- [ ] S8 `skill`：发现、front matter 解析、排序、`print_installed`/`print_brief`
+- [x] S8 `skill`：发现、front matter 解析、排序、`print_installed`/`print_brief`
 - [ ] `main` 子命令派发：`traj list/show/tail/search [--children/--full]`、`context [--traj]`、`skills`
 
 ### 阶段 9：端到端与文档
