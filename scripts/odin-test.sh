@@ -14,4 +14,5 @@ mkdir -p build
 cd build
 
 ODIN_BIN="${ODIN:-odin}"
-exec "$ODIN_BIN" test ../odin -vet "$@"
+# 单线程跑：测试共享进程级状态（temp 分配器、活动子进程等），并行会互相干扰。
+exec "$ODIN_BIN" test ../odin -vet -define:ODIN_TEST_THREADS=1 "$@"

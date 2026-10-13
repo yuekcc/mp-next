@@ -148,11 +148,11 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [ ] `llm.call`：system 前置 + 请求 + 解析 + 错误可读
 
 ### 阶段 6：bash 执行器
-- [ ] S9 `Executor`：脚本包装（set -e、cd、export、set -x、FINAL/FINAL_FILE 捕获、exit rc）
-- [ ] 定位 bash（Windows Git Bash / POSIX `/bin/bash`）；stdin 接 /dev/null
-- [ ] 输出合并、xtrace 剥离、2000 行截断 + 完整输出落盘
-- [ ] 三看门狗（空闲/输出量/墙钟）+ 结构化反馈；Windows Job Object 杀树
-- [ ] 中断处理器（SIGINT/SIGBREAK/SIGTERM → 杀子进程 + 退出 130）
+- [x] S9 `Executor`：脚本包装（set -e、cd、export、set -x、FINAL/FINAL_FILE 捕获、exit rc）
+- [x] 定位 bash（Windows Git Bash / POSIX `/bin/bash`）；stdin 接 /dev/null
+- [x] 输出合并、xtrace 剥离、2000 行截断 + 完整输出落盘
+- [x] 三看门狗（空闲/输出量/墙钟）+ 结构化反馈；Windows Job Object 杀树
+- [x] 中断处理器（SIGINT/SIGBREAK/SIGTERM → 杀子进程 + 退出 130）
 
 ### 阶段 7：RLM 主循环
 - [ ] S10 `agent.run`：建轨迹、写 shellm-run/prompt、每轮 render→call→extract→exec→append
