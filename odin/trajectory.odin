@@ -81,7 +81,10 @@ Trajectory :: struct {
 
 // ---- 轨迹根目录配置 ----
 // 只由 cmd 层在解析参数后设置一次：存放位置只由命令行/配置决定，不读环境变量。
+// thread_local：生产路径单线程设置并读取；单元测试并行跑时各线程互不干扰。
+@(thread_local)
 g_traj_dir: string // --traj-dir：直接作为根
+@(thread_local)
 g_config_dir: string // --config-dir：用来派生 <config-dir>/traj
 
 traj_configure :: proc(traj_dir, config_dir: string) {

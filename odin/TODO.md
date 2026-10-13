@@ -134,8 +134,8 @@ bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_l
 - [x] 轨迹根目录优先级：`--traj-dir` > 配置 `traj_dir` > `<config-dir>/traj` > `~/.llmcli/traj`
 
 ### 阶段 3：context 渲染
-- [ ] S5 `RenderPolicy` + `default_policy`
-- [ ] `render`：过滤（exclude/run 作用域）、head/tail/pin 窗口、角色映射、分层截断、max_bytes 折半
+- [x] S5 `RenderPolicy` + `default_policy`
+- [x] `render`：过滤（exclude/run 作用域）、head/tail/pin 窗口、角色映射、分层截断、max_bytes 折半
 
 ### 阶段 4：配置 + CLI 解析
 - [ ] S7 `config.load`（JSON→Settings，含已知键/类型校验/未知键告警）
