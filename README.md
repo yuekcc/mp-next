@@ -116,6 +116,7 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 odin build odin -out:build/llmcli-odin.exe                            # 构建（产物 build/llmcli-odin.exe）
 bash scripts/odin-test.sh                                             # 单元测试
 LLMCLI_BIN="$(pwd)/build/llmcli-odin.exe" python scripts/regress.py   # 端到端回归（复用同一套场景）
+LLMCLI_IMPL=odin bash run.sh                                          # 用 run.sh 跑 Odin 版（默认跑 C3 版）
 ```
 
 模块地图与硬约束见 [odin/AGENTS.md](odin/AGENTS.md)，工作计划见 [odin/TODO.md](odin/TODO.md)。

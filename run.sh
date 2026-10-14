@@ -9,19 +9,32 @@
 #   LLMCLI_API_URL   选填，默认 OpenAI 官方端点
 #   LLMCLI_MODEL     选填，默认 gpt-4o-mini
 #   LLMCLI_CONFIG    选填，轨迹根目录（默认 ./build/demo/traj）
+#   LLMCLI_IMPL      选填，实现：c3（默认）| odin
+#   LLMCLI_BIN       选填，直接指定二进制路径（优先于 LLMCLI_IMPL）
 
 set -exo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exe="$script_dir/build/llmcli"
-[ -x "$exe" ] || exe="$script_dir/build/llmcli.exe"
+
+# 选实现：LLMCLI_BIN 直接指定；否则按 LLMCLI_IMPL 在 build/ 下找对应产物。
+if [ -n "${LLMCLI_BIN:-}" ]; then
+    exe="$LLMCLI_BIN"
+elif [ "${LLMCLI_IMPL:-c3}" = "odin" ]; then
+    exe="$script_dir/build/llmcli-odin.exe"
+    [ -x "$exe" ] || exe="$script_dir/build/llmcli-odin"
+else
+    exe="$script_dir/build/llmcli"
+    [ -x "$exe" ] || exe="$script_dir/build/llmcli.exe"
+fi
 if [ ! -x "$exe" ]; then
-    echo "找不到 build/llmcli，请先 c3c build" >&2
+    echo "找不到可执行文件 $exe（LLMCLI_IMPL=${LLMCLI_IMPL:-c3}）" >&2
+    echo "  C3：  c3c build" >&2
+    echo "  Odin：odin build odin -out:build/llmcli-odin.exe" >&2
     exit 1
 fi
 
 : "${LLMCLI_API_KEY:?请设置 LLMCLI_API_KEY（例如 export LLMCLI_API_KEY=sk-...）}"
-api_url="${LLMCLI_API_URL:-http://localhost:8317/v1/chat/completions}"
+api_url="${LLMCLI_API_URL:-http://localhost:8788/v1/chat/completions}"
 model="${LLMCLI_MODEL:-hy3}"
 config="${LLMCLI_CONFIG:-$script_dir/build/demo}"
 api_key="${LLMCLI_API_KEYL:-sk-1234}"
