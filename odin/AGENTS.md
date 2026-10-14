@@ -10,7 +10,7 @@
 但按 Odin 惯例收在**单包 `main`**（一个目录 = 一个包，多文件按关注点拆分）。
 
 规格仍以 `../docs/arch.md`、`../docs/rlm.md`、`../docs/config.md` 等为准；本文件只放给 agent
-的模块地图、命令与硬约束。工作计划见 [TODO.md](./TODO.md)。
+的模块地图、命令与硬约束。
 
 ## Key Files (module map)
 

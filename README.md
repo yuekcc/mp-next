@@ -128,7 +128,7 @@ LLMCLI_IMPL=odin bash run.sh                                          # 用 run.
 GNU 工具链（gcc / MinGW / llvm-mingw 的 gnu 目标）链不动它的产物和 `libcurl.lib`；默认的
 `odin build` 走 Odin 自带的 MSVC 链接，照常可用。
 
-模块地图与硬约束见 [odin/AGENTS.md](odin/AGENTS.md)，工作计划见 [odin/TODO.md](odin/TODO.md)。
+模块地图与硬约束见 [odin/AGENTS.md](odin/AGENTS.md)。
 
 ## 文档
 
