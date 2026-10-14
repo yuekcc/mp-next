@@ -334,7 +334,9 @@ slug_from :: proc(input: string) -> string {
 		first = first[:nl]
 	}
 	if len(first) > 32 {
-		first = first[:32]
+		// 32 字节上限可能落在多字节字符中间：回退到 UTF-8 字符边界，
+		// 否则半个字符进目录名，日志里的 traj 名会出现替换方块。
+		first = first[:utf8_cut(first, 32)]
 	}
 	if first == "" {
 		return "run"

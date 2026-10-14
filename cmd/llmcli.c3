@@ -2,8 +2,8 @@ module llmcli;
 
 import std::io;
 import std::collections::list;
-import llmcli::agent, llmcli::cli, llmcli::context, llmcli::http, llmcli::log, llmcli::runtime,
-	llmcli::skill, llmcli::trajectory;
+import llmcli::agent, llmcli::buf, llmcli::cli, llmcli::context, llmcli::http, llmcli::log,
+	llmcli::runtime, llmcli::skill, llmcli::trajectory;
 
 // ---- 分节 ----
 // main：识别子命令（第一个参数是命令名时）→ 否则走一次真实运行。
@@ -173,7 +173,7 @@ fn int list_children()
 fn String io_truncate(String text) @private
 {
 	String one = text.treplace("\n", " / ");
-	return one.len > 120 ? one[:120] : one;
+	return one.len > 120 ? one[:buf::utf8_cut(one, 120)] : one;
 }
 
 // llmcli context [--traj <name>]：打印渲染出的 messages（默认最近一条轨迹）。

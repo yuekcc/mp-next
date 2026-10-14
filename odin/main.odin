@@ -179,7 +179,7 @@ list_children :: proc() -> int {
 io_truncate :: proc(text: string) -> string {
 	one, _ := strings.replace_all(text, "\n", " / ", context.temp_allocator)
 	if len(one) > 120 {
-		return one[:120]
+		return one[:utf8_cut(one, 120)]
 	}
 	return one
 }

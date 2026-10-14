@@ -10,14 +10,25 @@ import "core:strings"
 // 归属：结果可能借用入参（未截断时），也可能新分配（截断时走 context.temp_allocator）。
 // 调用方只做即时展示，不必释放；需要长期持有的自行拷贝。
 
-truncate :: proc(text: string, limit: int) -> string {
-	if len(text) <= limit {
-		return text
+// 返回不越过 limit、且落在 UTF-8 字符边界上的字节数：若 limit 落在多字节字符中间
+// （续字节特征 10xxxxxx），向前回退到该字符起点。所有「按字节截前缀」的调用方都应走这里，
+// 否则半个多字节字符写进目录名/日志/终端就是非法 UTF-8（下游解码显示为替换方块）。
+utf8_cut :: proc(text: string, limit: int) -> int {
+	if limit >= len(text) {
+		return len(text)
 	}
 	cut := limit
 	for cut > 0 && (text[cut] & 0xC0) == 0x80 {
 		cut -= 1
 	}
+	return cut
+}
+
+truncate :: proc(text: string, limit: int) -> string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := utf8_cut(text, limit)
 	return fmt.aprintf("%s…（已截断，共 %d 字节）", text[:cut], len(text), allocator = context.temp_allocator)
 }
 

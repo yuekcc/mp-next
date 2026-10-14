@@ -77,3 +77,12 @@ extract_code_trims_trailing_blank_lines :: proc(t: ^testing.T) {
 	testing.expect(t, res.has_code)
 	testing.expect_value(t, res.code, "ls\n")
 }
+
+// ---- slug_from：目录名/日志里的 traj 名不能含半个多字节字符 ----
+
+@(test)
+slug_from_does_not_split_multibyte_char :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	// 前 10 个字 30 字节，"个" 占第 31..33 字节；32 字节上限应回退到 30。
+	testing.expect_value(t, slug_from("统计当前目录下有多少个文件"), "统计当前目录下有多少")
+}
