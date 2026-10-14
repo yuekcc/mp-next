@@ -12,13 +12,13 @@
 c3c build        # 产物：build/llmcli(.exe)
 ```
 
-### 全静态构建（Windows）
+### 全静态构建（Windows，C3 版）
 
 产物不依赖 `libcurl-x64.dll`（只留 Windows 自带系统 DLL）：
 
 ```bash
-bash scripts/build-static.sh          # 默认用 zig cc 链接；产物 build/llmcli-static.exe
-CC=gcc bash scripts/build-static.sh   # 也可换成 gcc
+bash scripts/build-c3-static.sh          # 默认用 zig cc 链接；产物 build/llmcli-static.exe
+CC=gcc bash scripts/build-c3-static.sh   # 也可换成 gcc
 ```
 
 用 c3c 只编译出 `.o`（`--target mingw-x64`），再由 zig cc（clang + lld，自带 mingw-w64）静态链接；
