@@ -243,13 +243,8 @@ traj_append :: proc(traj: ^Trajectory, step_in: Step) -> string {
 	}
 
 	obj := step_to_json(traj, &step)
-	data, err := json.marshal(obj, json.Marshal_Options{spec = .JSON, sort_maps_by_key = true},
-	                          context.temp_allocator)
-	if err != nil {
-		log_warn("轨迹步骤序列化失败：%v", err)
-		return step.step_id
-	}
-	payload := fmt.aprintf("%s\n", string(data), allocator = context.temp_allocator)
+	// 用自写的 json_encode：中文原样 UTF-8，不写成 \uXXXX。
+	payload := fmt.aprintf("%s\n", json_encode(obj), allocator = context.temp_allocator)
 
 	f, oerr := os.open(traj.path, {.Append, .Create, .Write})
 	if oerr != nil {

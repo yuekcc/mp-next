@@ -82,6 +82,9 @@
 ## Odin 特有的坑
 
 - **`fmt` 把 `{`/`}` 当占位符**：写字面大括号要写 `{{`/`}}`（轨迹头行踩过）。
+- **JSON 输出用自写的 `json_encode`（`jsonw.odin`）**：`core:encoding/json` 的 `marshal` 会把
+  CJK 转义成 `\uXXXX`（其 `is_printable` 只认 Latin-1）。我们要中文原样 UTF-8（对齐 cjson），
+  所以请求体/轨迹步骤都走 `json_encode`；**别换回 `json.marshal`**。解析仍用 `core:encoding/json`。
 - **路径分隔符不能混用**：Windows `os.make_directory_all` 对 `C:\a/b` 会报 `Permission_Denied`，
   内部路径一律 `slashify` 成 `/` 再拼。
 - **`put_text` 等写 map 的辅助函数要收 `^json.Object`**（值传参 + 计算键无法赋值）。

@@ -52,11 +52,8 @@ build_request :: proc(model: string, messages: []Message) -> string {
 	}
 	root["messages"] = json.Value(arr)
 
-	data, err := json.marshal(root, json.Marshal_Options{spec = .JSON}, context.temp_allocator)
-	if err != nil {
-		return ""
-	}
-	return string(data)
+	// 用自写的 json_encode：非 ASCII（中文）原样输出 UTF-8，不写成 \uXXXX。
+	return json_encode(root)
 }
 
 // ---- 响应解析 ----

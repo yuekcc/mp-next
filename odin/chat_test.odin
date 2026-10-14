@@ -80,6 +80,15 @@ build_request_omits_reasoning_and_tools :: proc(t: ^testing.T) {
 }
 
 @(test)
+build_request_keeps_non_ascii_unescaped :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	body := build_request("中文模型", []Message{{role = "user", content = "系统令·你好"}})
+	testing.expect(t, strings.contains(body, "系统令·你好"), body)
+	testing.expect(t, strings.contains(body, "中文模型"), body)
+	testing.expect(t, !strings.contains(body, "\\u"), "non-ASCII must not be \\u-escaped: %s", body)
+}
+
+@(test)
 parse_response_reads_content_reasoning_usage_finish :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
 	body := `{"choices":[{"message":{"content":"hello","reasoning_content":"think"},` +

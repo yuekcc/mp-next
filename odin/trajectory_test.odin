@@ -50,8 +50,7 @@ trajectory_append_read_roundtrip :: proc(t: ^testing.T) {
 }
 
 @(test)
-trajectory_file_starts_with_valid_header :: proc(t: ^testing.T) {
-	dir, ok := make_temp_traj_dir(t)
+trajectory_file_starts_with_valid_header :: proc(t: ^testing.T) {	dir, ok := make_temp_traj_dir(t)
 	if !ok {
 		return
 	}
@@ -177,4 +176,26 @@ must_write :: proc(t: ^testing.T, path, content: string) {
 	if err := os.write_entire_file_from_string(path, content); err != nil {
 		testing.expectf(t, false, "write %s: %v", path, err)
 	}
+}
+
+@(test)
+trajectory_writes_utf8_unescaped :: proc(t: ^testing.T) {
+	dir, ok := make_temp_traj_dir(t)
+	if !ok {
+		return
+	}
+	defer free_all(context.temp_allocator)
+	defer os.remove_all(dir)
+	traj_set_base_dir(dir)
+
+	traj := traj_open_new("中文")
+	traj_append(&traj, Step{type = T_PROMPT, run_id = "r", content = "你好，世界"})
+
+	raw, _ := os.read_entire_file_from_path(traj.path, context.temp_allocator)
+	testing.expect(t, strings.contains(string(raw), "你好，世界"), string(raw))
+	testing.expect(t, !strings.contains(string(raw), "\\u"), "non-ASCII must not be \\u-escaped")
+
+	steps := traj_read_all(&traj)
+	testing.expect_value(t, len(steps), 1)
+	testing.expect_value(t, steps[0].content, "你好，世界")
 }
