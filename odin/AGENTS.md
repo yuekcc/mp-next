@@ -43,14 +43,18 @@
 ## Commands
 
 - `odin build odin -out:build/llmcli-odin.exe` — 构建。
-- `bash scripts/odin-test.sh` — 单元测试（先 `cd build/` 再 `odin test ../odin`，并强制单线程；
-  原因见下。普通环境等价于 `odin test odin -vet`）。
-- 端到端回归（复用 C3 的脚本，需先构建）：`LLMCLI_BIN="$(pwd)/build/llmcli-odin.exe" python scripts/regress.py`。
+- `bash scripts/odin-test.sh` — 单元测试（从 `tmp/` 跑，并强制单线程；原因见下。
+  普通环境等价于 `odin test odin -vet`）。
+- 端到端回归（复用 C3 的脚本，需先构建；把二进制放到 `tmp/` 再跑）：`cp build/llmcli-odin.exe tmp/ && LLMCLI_BIN="$(pwd)/tmp/llmcli-odin.exe" python scripts/regress.py`。
 
-> **两个环境坑**：
-> 1. 某些沙箱里，被测包目录位于当前 cwd 子树内时测试进程会被限制文件写入 → 从 `build/` 跑。
-> 2. 测试并行会共享进程级状态（`context.temp_allocator`、`runtime` 的活动子进程全局）→ 单线程跑。
-> 3. `uuid.generate_v4` 需要 CSPRNG，`odin test` 线程上下文只给非加密 RNG → `crypto_uuid_string`
+> **沙箱环境坑（本机 agent 沙箱）**：
+> 1. **只允许从特定目录执行会派生子进程的二进制**：`tmp/`（或 harness 的 opencode temp）可以，
+>    `build/`、仓库根等位置的 exe 起 bash 会 `NtCreateDirectoryObject(\BaseNamedObjects\...) 0xC0000022`。
+>    → `scripts/odin-test.sh` 从 `tmp/` 跑；`run.sh` 把二进制暂存到 `tmp/` 再跑（见其注释）。
+> 2. **非 `tmp/` 位置的二进制不能写系统 temp**（`Permission_Denied`）→ `Executor` 会探测可写目录，
+>    回退到 `<cwd>/.llmcli-tmp`（见 `runtime.pick_scratch_dir`）。
+> 3. **测试并行会共享进程级状态**（`context.temp_allocator`、`runtime` 的活动子进程全局）→ 单线程跑。
+> 4. **`uuid.generate_v4` 需要 CSPRNG**，`odin test` 线程上下文只给非加密 RNG → `crypto_uuid_string`
 >    里显式装 `crypto.random_generator()`。
 
 ## Code style & conventions

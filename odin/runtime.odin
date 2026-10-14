@@ -96,6 +96,7 @@ Executor :: struct {
 	inactivity_timeout: int, // 秒；<=0 关闭
 	max_output_size:    int, // 字节；0 关闭
 	max_exec_time:      int, // 秒；<=0 关闭
+	scratch_dir:        string, // 临时脚本/答案落盘目录；空 = 运行时探测（见 pick_scratch_dir）
 }
 
 default_executor :: proc() -> Executor {
@@ -179,10 +180,35 @@ find_bash :: proc() -> string {
 }
 
 // 临时文件路径（每次执行一个）。
-make_temp_path :: proc(stem, ext: string) -> string {
-	dir := os.temp_directory(context.temp_allocator) or_else "."
+make_temp_path :: proc(dir, stem, ext: string) -> string {
 	return fmt.aprintf("%s/llmcli_%s_%d.%s", dir, stem, time.now()._nsec, ext,
 	                   allocator = context.temp_allocator)
+}
+
+// 目录是否可写（写一个探针文件再删掉）。
+dir_writable :: proc(dir: string) -> bool {
+	probe := fmt.aprintf("%s/.llmcli-wtest-%d", slashify(dir), time.now()._nsec,
+	                     allocator = context.temp_allocator)
+	if os.write_entire_file_from_string(probe, "") != nil {
+		return false
+	}
+	_ = os.remove(probe)
+	return true
+}
+
+// 选临时脚本目录：优先系统 temp；某些沙箱对特定位置的进程会拒绝写系统 temp，此时回退到
+// 工作目录下的 .llmcli-tmp。返回的目录保证可写（最后的 "." 为兜底）。
+pick_scratch_dir :: proc() -> string {
+	if tmp, _ := os.temp_directory(context.temp_allocator); tmp != "" && dir_writable(tmp) {
+		return slashify(tmp)
+	}
+	cwd, _ := os.get_working_directory(context.temp_allocator)
+	base := cwd != "" ? cwd : "."
+	fallback := fmt.aprintf("%s/.llmcli-tmp", slashify(base), allocator = context.temp_allocator)
+	if os.make_directory_all(fallback) == nil && dir_writable(fallback) {
+		return fallback
+	}
+	return "."
 }
 
 // 单引号字符串转义（用于 export NAME='...'）。
@@ -353,7 +379,7 @@ collect_process :: proc(command: []string, ex: ^Executor) -> Collected {
 
 // 截断与回填文本：剥 xtrace（可选）→ 超 2000 行截断为末 2000 行、完整输出落盘 →
 // 前面可加反馈 → 非零退出码附 [exit N]。返回 temp 上的串。
-finalize_output :: proc(c: ^Collected, strip_trace: bool, feedback: string) -> string {
+finalize_output :: proc(c: ^Collected, strip_trace: bool, feedback, scratch_dir: string) -> string {
 	full := strip_trace ? strip_xtrace(c.raw) : c.raw
 	if strings.trim_space(full) == "" {
 		full = ""
@@ -368,14 +394,12 @@ finalize_output :: proc(c: ^Collected, strip_trace: bool, feedback: string) -> s
 	}
 	if line_count > OUTPUT_LINE_LIMIT {
 		truncated = true
-		if tmp, terr := os.temp_directory(context.temp_allocator); terr == nil {
-			path := fmt.aprintf("%s/llmcli_output_%d.txt", tmp, time.now()._nsec,
-			                    allocator = context.temp_allocator)
-			if err := os.write_entire_file_from_string(path, full); err != nil {
-				log_warn("执行输出落盘失败：%v", err)
-			} else {
-				output_file = path
-			}
+		path := fmt.aprintf("%s/llmcli_output_%d.txt", scratch_dir, time.now()._nsec,
+		                    allocator = context.temp_allocator)
+		if err := os.write_entire_file_from_string(path, full); err != nil {
+			log_warn("执行输出落盘失败：%v", err)
+		} else {
+			output_file = path
 		}
 	}
 
@@ -418,13 +442,17 @@ read_final :: proc(exec: ^ExecResult, final_path: string) {
 // Executor 入口：执行一段生成代码，返回结果。
 executor_run :: proc(ex: ^Executor, code: string) -> ExecResult {
 	exec: ExecResult
-	final_path := make_temp_path("final", "txt")
-	script_path := make_temp_path("script", "sh")
+	if ex.scratch_dir == "" {
+		ex.scratch_dir = pick_scratch_dir()
+	}
+	final_path := make_temp_path(ex.scratch_dir, "final", "txt")
+	script_path := make_temp_path(ex.scratch_dir, "script", "sh")
 	defer _ = os.remove(script_path)
 
 	script := build_bash_script(ex, code, final_path)
 	if err := os.write_entire_file_from_string(script_path, script); err != nil {
-		exec.output = fmt.aprintf("写入临时脚本失败：%v", err, allocator = context.temp_allocator)
+		exec.output = fmt.aprintf("写入临时脚本失败（%s）：%v", script_path, err,
+		                          allocator = context.temp_allocator)
 		exec.exit_code = -1
 		return exec
 	}
@@ -442,7 +470,7 @@ executor_run :: proc(ex: ^Executor, code: string) -> ExecResult {
 	if c.killed {
 		exec.feedback = watch_feedback(c.reason)
 	}
-	exec.output = finalize_output(&c, true, exec.feedback)
+	exec.output = finalize_output(&c, true, exec.feedback, ex.scratch_dir)
 	exec.exit_code = c.exit_code
 	read_final(&exec, final_path)
 	_ = os.remove(final_path)

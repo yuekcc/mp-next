@@ -1,6 +1,7 @@
 /build
 /out
 /tmp
+/.llmcli-tmp
 __pycache__/
 *.pyc
 

@@ -70,9 +70,11 @@ bash scripts/odin-test.sh                      # 单元测试（cd build/ 再跑
 bash scripts/regress-odin.sh                   # 端到端回归（对接 mock_llm.py，待补）
 ```
 
-> **测试运行位置的坑**：某些沙箱环境里，当被测包目录位于当前工作目录子树内时，测试进程会被
-> 限制文件写入，导致轨迹/配置/技能测试报 `Permission_Denied`。`scripts/odin-test.sh` 先 `cd build/`
-> 再以 `odin test ../odin` 运行，规避该限制；普通环境下等价于 `odin test odin -vet`。
+> **测试/运行位置的坑**：某些沙箱只允许从特定目录（仓库 `tmp/` 或 harness 的 opencode temp）
+> 执行会派生子进程的二进制；`build/` 等位置的 exe 起 bash 会报
+> `NtCreateDirectoryObject(\BaseNamedObjects\...) 0xC0000022`，且不能写系统 temp。
+> `scripts/odin-test.sh` 从 `tmp/` 跑；`run.sh` 把二进制暂存到 `tmp/` 再跑；`Executor` 也会
+> 探测可写的临时目录（回退 `<cwd>/.llmcli-tmp`）。普通环境下走系统 temp，无影响。
 
 ## 4. 模块地图与职责
 
