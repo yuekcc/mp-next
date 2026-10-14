@@ -1,0 +1,7 @@
+{
+  "api_key": "sk-1234",
+  "api_url": "http://localhost:8788/v1/chat/completions",
+  "model": "hy3",
+  "max_iterations": 10,
+  "traj_dir": "build/demo/traj"
+}

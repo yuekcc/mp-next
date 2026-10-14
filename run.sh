@@ -4,12 +4,15 @@
 # 模型会写 ```bash 代码块，llmcli 执行后把输出回填，循环直到代码里设置
 # FINAL / FINAL_FILE 才收尾——bash 就是它唯一的工具。
 #
-# 配置走环境变量，均可覆盖：
-#   LLMCLI_API_KEY   选填，端点密钥（默认 sk-1234）
-#   LLMCLI_API_URL   选填，默认 http://localhost:8788/v1/chat/completions
-#   LLMCLI_MODEL     选填，默认 hy3
-#   LLMCLI_CONFIG    选填，轨迹根目录（默认 ./build/demo/traj）
-#   LLMCLI_MAX_ITERATIONS 选填，循环上限（默认 10）
+# 持久偏好默认放仓库根的 llmcli.json（api_key / api_url / model / max_iterations / traj_dir），
+# 由 --config-dir 读取。下面的环境变量若设置，则作为本次运行对配置的覆盖（flag 优先级高于配置）：
+#   LLMCLI_API_KEY   选填，覆盖配置里的 api_key
+#   LLMCLI_API_URL   选填，覆盖 api_url
+#   LLMCLI_MODEL     选填，覆盖 model
+#   LLMCLI_MAX_ITERATIONS 选填，覆盖 max_iterations
+#   LLMCLI_CONFIG_DIR 选填，配置文件所在目录（默认脚本所在仓库根）
+#   LLMCLI_TRAJ_DIR  选填，轨迹根目录（默认 <repo>/build/demo/traj）
+#   LLMCLI_CONFIG    选填，演示基目录（默认 <repo>/build/demo），其 /traj 即默认轨迹根
 #   LLMCLI_IMPL      选填，实现：c3（默认）| odin
 #   LLMCLI_BIN       选填，直接指定二进制路径（优先于 LLMCLI_IMPL）
 #   LLMCLI_RUN_DIR   选填，把二进制暂存到哪个目录再运行（默认 <repo>/tmp）
@@ -48,24 +51,22 @@ if [ -z "${LLMCLI_NO_STAGE:-}" ]; then
     exe="$staged"
 fi
 
-: "${LLMCLI_API_KEY:=sk-1234}"
-api_url="${LLMCLI_API_URL:-http://localhost:8788/v1/chat/completions}"
-model="${LLMCLI_MODEL:-hy3}"
-config="${LLMCLI_CONFIG:-$script_dir/build/demo}"
-api_key="$LLMCLI_API_KEY"
-max_iter="${LLMCLI_MAX_ITERATIONS:-10}"
-
+# 持久偏好默认放仓库根的 llmcli.json；run.sh 用 --config-dir 读它。
+# 下面的环境变量若设置，则作为本次运行对配置的覆盖（flag 优先级高于配置）。
+config_dir="${LLMCLI_CONFIG_DIR:-$script_dir}"
+demo_base="${LLMCLI_CONFIG:-$script_dir/build/demo}"
+traj_root="${LLMCLI_TRAJ_DIR:-$demo_base/traj}"
 traj_id="demo_$(date +%s)"
-echo "轨迹 $traj_id，模型 $model，max-iterations $max_iter，轨迹目录 $config/traj/$traj_id" >&2
+
+args=(--config-dir "$config_dir" --traj-dir "$traj_root" --traj "$traj_id" --debug)
+if [ -n "${LLMCLI_API_URL:-}" ]; then args+=(--api-url "$LLMCLI_API_URL"); fi
+if [ -n "${LLMCLI_MODEL:-}" ]; then args+=(--model "$LLMCLI_MODEL"); fi
+if [ -n "${LLMCLI_API_KEY:-}" ]; then args+=(--api-key "$LLMCLI_API_KEY"); fi
+if [ -n "${LLMCLI_MAX_ITERATIONS:-}" ]; then args+=(--max-iterations "$LLMCLI_MAX_ITERATIONS"); fi
+
+echo "轨迹 $traj_id，配置目录 $config_dir，轨迹目录 $traj_root/$traj_id" >&2
 
 # 任务：先让模型自己数清 src 目录里有多少个 C3 源文件，再设 FINAL 收尾。
 # 它得先跑 find/wc 之类的命令拿到真实数字——单轮问答给不出这个数。
-"$exe" \
-    --traj-dir "$config/traj" \
-    --api-url "$api_url" \
-    --model "$model" \
-    --api-key "$api_key" \
-    --max-iterations "$max_iter" \
-    --traj "$traj_id" \
-    --debug \
+"$exe" "${args[@]}" \
     "统计 $script_dir/src 目录下 .c3 源文件的个数，用 FINAL=\"数量是 N 个\" 给出答案"
