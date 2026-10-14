@@ -114,6 +114,7 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 
 ```bash
 odin build odin -out:build/llmcli-odin.exe                            # 构建（产物 build/llmcli-odin.exe）
+bash scripts/build-odin.sh                                            # 构建：Odin 只编译，链接交给 zig cc（Windows）
 bash scripts/odin-test.sh                                             # 单元测试
 cp build/llmcli-odin.exe tmp/ && LLMCLI_BIN="$(pwd)/tmp/llmcli-odin.exe" python scripts/regress.py  # 端到端回归
 LLMCLI_IMPL=odin bash run.sh                                          # 用 run.sh 跑 Odin 版（默认跑 C3 版）
@@ -121,6 +122,11 @@ LLMCLI_IMPL=odin bash run.sh                                          # 用 run.
 
 > 某些沙箱只允许从 `tmp/` 执行会派生子进程的二进制，因此回归/run.sh 会把二进制暂存到 `tmp/`
 > 再运行（`run.sh` 默认自动暂存，`LLMCLI_NO_STAGE=1` 可关闭）。
+
+`build-odin.sh` 是把链接交给 zig cc 的等价构建：Odin 只出 `.obj`（`-build-mode:obj`，单模块），
+再由 `zig cc -target x86_64-windows-msvc` 链成 exe。Odin 的 Windows 目标只有 MSVC ABI 一种，
+GNU 工具链（gcc / MinGW / llvm-mingw 的 gnu 目标）链不动它的产物和 `libcurl.lib`；默认的
+`odin build` 走 Odin 自带的 MSVC 链接，照常可用。
 
 模块地图与硬约束见 [odin/AGENTS.md](odin/AGENTS.md)，工作计划见 [odin/TODO.md](odin/TODO.md)。
 

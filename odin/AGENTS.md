@@ -43,6 +43,9 @@
 ## Commands
 
 - `odin build odin -out:build/llmcli-odin.exe` — 构建。
+- `bash scripts/build-odin.sh` — 等价构建，但 Odin 只出 `.obj`、链接交给 zig cc
+  （`-target x86_64-windows-msvc`）。Odin 的 Windows 目标是 MSVC ABI，GNU 工具链链不动，
+  别把那一步换成 gcc。
 - `bash scripts/odin-test.sh` — 单元测试（从 `tmp/` 跑，并强制单线程；原因见下。
   普通环境等价于 `odin test odin -vet`）。
 - 端到端回归（复用 C3 的脚本，需先构建；把二进制放到 `tmp/` 再跑）：`cp build/llmcli-odin.exe tmp/ && LLMCLI_BIN="$(pwd)/tmp/llmcli-odin.exe" python scripts/regress.py`。
