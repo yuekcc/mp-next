@@ -107,6 +107,11 @@ c3c test                       # 单元测试
 python scripts/regress.py      # 端到端回归（需先 c3c build）
 ```
 
+> 端到端回归要真正起 bash 子进程执行生成代码，因此被测二进制必须放在沙箱允许的位置：把
+> `build/llmcli.exe` 复制到 `tmp/` 再跑 `LLMCLI_BIN="$(pwd)/tmp/llmcli.exe" python scripts/regress.py`。
+> 直接拿 `build/llmcli.exe` 跑会在沙箱里报 `写入临时脚本失败：io::NO_PERMISSION`，接着连续
+> 失败退出，一屏 FAIL 全是这个原因。Odin 版同理（见下节）。
+
 ## Odin 实现
 
 仓库根另有 `odin/`：llmcli 的 Odin 重写。运行时行为与可观测面（`--help` 文本、轨迹 JSONL
