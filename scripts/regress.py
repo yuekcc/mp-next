@@ -346,6 +346,39 @@ def s2_block_loop(mock):
         noop.stop()
 
 
+def s2_stream(mock):
+    """AC: --stream（Odin 版支持）走 SSE 增量解析，可观测行为与非流式一致。
+
+    C3 版还没这个开关：--help 里找不到 --stream 就跳过，保证同一个回归脚本两版都能跑。
+    """
+    probe = run_cli(["--help"])
+    if "--stream" not in probe.stdout:
+        check("S2 --stream：当前二进制不支持该开关（跳过）", True, "C3 版无非流式开关")
+        return
+
+    root = os.path.join(WORK, "s2_stream_traj")
+    mock.reset()
+    proc = run_cli(["--model", "any", "--api-key", API_KEY, "--api-url", mock.base_url, "--stream"],
+                   stdin_text="run the tool", traj_dir=root)
+    check("S2 --stream：退出码 0", proc.returncode == 0, proc.stderr)
+    check("S2 --stream：stdout 只有最终答案", proc.stdout.strip() == "final answer", repr(proc.stdout))
+    check("S2 --stream：执行输出打印到 stderr", "hello-from-tool" in proc.stderr, repr(proc.stderr))
+    check("S2 --stream：每轮都打 token 用量（从末尾 usage 帧取回）",
+          proc.stderr.count("prompt=11") >= 2, repr(proc.stderr))
+
+    requests = mock.requests()
+    check("S2 --stream：共 2 次请求", len(requests) == 2, str(len(requests)))
+    check("S2 --stream：请求体 stream=true",
+          bool(requests) and requests[0].get("stream") is True,
+          str(requests[0].get("stream") if requests else None))
+    check("S2 --stream：请求体不带 tools",
+          bool(requests) and "tools" not in requests[0], str(requests[0].keys() if requests else None))
+
+    steps = read_steps(root)
+    types = step_types(list(steps.values())[0]) if steps else []
+    check("S2 --stream：轨迹以 final 收尾", "final" in types, str(types))
+
+
 def s2_block_final(mock):
     """AC: 代码里设 FINAL 当场结束，stdout 为 FINAL 的值。"""
     root = os.path.join(WORK, "s2_final_traj")
@@ -851,6 +884,7 @@ def main():
         s1_print_system_prompt(simple_mock)
         s1_single_turn(simple_mock, args.verbose)
         s2_block_loop(mock)
+        s2_stream(mock)
         s2_block_final(mock)
         s2_final_empty()
         s2_final_file(1)

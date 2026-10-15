@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """本地 mock OpenAI chat completions 服务，供 llmcli 回归测试使用。
 
-只实现 POST /v1/chat/completions（非流式）与 GET /health。
+只实现 POST /v1/chat/completions 与 GET /health。
+请求体里 stream=true 时按 OpenAI 流式协议回 text/event-stream（chunked），否则回整包 JSON。
 响应按"脚本"依次返回：第 N 次请求返回脚本第 N 条，脚本用完后重复最后一条。
 
 llmcli 是 shellm 式 RLM 循环：模型回复一个 ```python 代码块，本地执行后把输出作为
@@ -183,6 +184,56 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_stream(self, response):
+        """按 OpenAI 流式协议回 text/event-stream（chunked）。
+
+        把 message.content / reasoning_content 切成若干 delta 分片，末尾发 finish_reason 帧、
+        空 choices 的 usage 帧与 [DONE]。libcurl 解 chunked，客户端逐帧增量解析。
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+
+        def emit(payload):
+            body = ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+            self.wfile.write(("%x\r\n" % len(body)).encode("ascii"))
+            self.wfile.write(body)
+            self.wfile.write(b"\r\n")
+            self.wfile.flush()
+
+        cid = response.get("id", "chatcmpl-mock")
+        model = response.get("model", "mock")
+        choice = response["choices"][0]
+        message = choice.get("message") or {}
+
+        def frame(delta, finish_reason=None):
+            return {
+                "id": cid,
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+            }
+
+        emit(frame({"role": "assistant"}))
+        content = message.get("content") or ""
+        for i in range(0, len(content), 8):
+            emit(frame({"content": content[i:i + 8]}))
+        reasoning = message.get("reasoning_content")
+        if reasoning:
+            for i in range(0, len(reasoning), 8):
+                emit(frame({"reasoning_content": reasoning[i:i + 8]}))
+        emit(frame({}, choice.get("finish_reason", "stop")))
+        # 末尾 usage 帧：choices 为空（对齐 OpenAI 的 stream_options.include_usage）。
+        emit({"id": cid, "object": "chat.completion.chunk", "created": 0, "model": model,
+              "choices": [], "usage": response.get("usage")})
+        done = b"data: [DONE]\n\n"
+        self.wfile.write(("%x\r\n" % len(done)).encode("ascii") + done + b"\r\n")
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
     def do_GET(self):
         if self.path == "/health":
             self._send(200, {"status": "ok"})
@@ -260,7 +311,10 @@ class Handler(BaseHTTPRequestHandler):
                 "total_tokens": 33,
             },
         }
-        self._send(200, response)
+        if request.get("stream"):
+            self._send_stream(response)
+        else:
+            self._send(200, response)
 
 
 def main():
