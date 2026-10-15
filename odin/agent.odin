@@ -159,7 +159,7 @@ agent_run :: proc(ctx: ^Ctx) -> int {
 	apply_policy_overrides(&st.policy, ctx)
 	st.executor = default_executor()
 	apply_executor_overrides(&st.executor, ctx)
-	st.llm = Llm{api_url = ctx.api_url, api_key = ctx.api_key, model = ctx.model}
+	st.llm = Llm{api_url = ctx.api_url, api_key = ctx.api_key, model = ctx.model, stream = ctx.stream}
 
 	st.traj = open_trajectory(ctx)
 	if st.traj.path == "" {

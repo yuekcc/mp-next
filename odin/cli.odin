@@ -36,6 +36,7 @@ Ctx :: struct {
 	api_url:    string, // 端点，默认 DEFAULT_API_URL
 	model:      string, // 模型 id，原样进请求体
 	config_dir: string, // 配置根目录；空 = 用默认 ~/.llmcli
+	stream:     bool, // --stream：请求端点用 SSE 流式返回（默认非流式）
 
 	// --- 本次运行边界：约束这一次 run 的范围 ---
 	traj_id:            string, // 非空 = 续接/写入该轨迹目录名（--traj）；空 = 新建
@@ -87,6 +88,7 @@ Seen :: struct {
 	vars:               bool,
 	debug:              bool,
 	no_color:           bool,
+	stream:             bool,
 }
 
 ParseResult :: struct {
@@ -174,6 +176,7 @@ cli_parse :: proc(args: []string) -> ParseResult {
 		if name == "--no-config" { o.no_config = true; i += 1; continue }
 		if name == "--print-system-prompt" { o.print_system_prompt = true; i += 1; continue }
 		if name == "--resume" { o.resume = true; i += 1; continue }
+		if name == "--stream" { o.stream = true; res.seen.stream = true; i += 1; continue }
 
 		if name == "--max-iterations" {
 			value: string
@@ -511,6 +514,7 @@ cli_apply_config :: proc(o: ^Ctx, seen: ^Seen, s: ^ConfigSettings) {
 	// 布尔开关：配置能开；本次不提供反义 flag，命令行关不掉（要关就 --no-config 整份跳过）。
 	if s.h_debug && !seen.debug { o.debug = s.debug }
 	if s.h_no_color && !seen.no_color { o.no_color = s.no_color }
+	if s.h_stream && !seen.stream { o.stream = s.stream }
 
 	// var：配置提供基础，命令行逐键追加/覆盖（配置先、CLI 后；执行时后写的胜出）。
 	if s.h_var {
@@ -629,6 +633,7 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
                            不读任何环境变量
   --no-config              跳过整份 llmcli.json，只用内置默认 + 命令行 flag
   --max-iterations <n>     最多发起 n 次请求（n>0 生效）；不给或 <=0 表示不设上限
+  --stream                 用 SSE 流式接收响应（长回复更不易超时）；默认非流式
   --context-scope <s>      渲染范围 traj | run（默认 traj）
   --max-bytes <n>          context 渲染预算（字节）；0 = 不限
   --workdir <dir>          生成代码的工作目录
@@ -655,7 +660,7 @@ trajectory 是唯一真相源：每轮 messages 从 trajectory 重渲染。
     system_prompt, system_prompt_file（两者互斥）,
     max_iterations, context_scope, max_bytes,
     inactivity_timeout, max_output_size, max_exec_time,
-    var（对象，NAME -> VALUE）, debug, no_color
+    var（对象，NAME -> VALUE）, debug, no_color, stream
   以下 flag 不属于持久偏好，配置文件里不认（写了按未知键告警并忽略）：
     -h/--help、--print-system-prompt、-p/--prompt/位置参数、--input-file、--traj、--resume、
     --config-dir、--quiet、--no-config。

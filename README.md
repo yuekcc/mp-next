@@ -112,6 +112,9 @@ python scripts/regress.py      # 端到端回归（需先 c3c build）
 仓库根另有 `odin/`：llmcli 的 Odin 重写。运行时行为与可观测面（`--help` 文本、轨迹 JSONL
 字段、退出码、stdout 纯净度）与 C3 版一致；模块划分与 C3 版一一对应，按 Odin 惯例收在单包 `main`。
 
+Odin 版额外支持 `--stream`（也可写进 `llmcli.json` 的 `stream`）：请求体带 `stream:true`，
+按 SSE 增量接收并拼成完整回复，对外可观测结果与非流式一致。默认非流式；C3 版暂无此开关。
+
 ```bash
 odin build odin -out:build/llmcli-odin.exe                            # 构建（产物 build/llmcli-odin.exe）
 bash scripts/build-odin.sh                                            # 构建：Odin 只编译，链接交给 zig cc（Windows）

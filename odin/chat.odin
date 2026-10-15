@@ -36,11 +36,11 @@ ChatResponse :: struct {
 // ---- 请求组装 ----
 
 // 组装一次 chat completions 请求体（结果在 context.temp_allocator 上）。
-// 回传端点时不带 reasoning_content；不带 tools；stream 固定 false。
-build_request :: proc(model: string, messages: []Message) -> string {
+// 回传端点时不带 reasoning_content；不带 tools；stream 默认 false（--stream 时为 true）。
+build_request :: proc(model: string, messages: []Message, stream: bool = false) -> string {
 	root := make(json.Object, allocator = context.temp_allocator)
 	root["model"] = model
-	root["stream"] = false
+	root["stream"] = json.Boolean(stream)
 
 	arr := make(json.Array, 0, len(messages), context.temp_allocator)
 	for m in messages {
@@ -101,6 +101,142 @@ parse_response :: proc(body: string) -> ChatResponse {
 		res.usage = format_usage(usage)
 	}
 	res.ok = true
+	return res
+}
+
+// ---- 流式（SSE）增量解析 ----
+
+// 累积一次 chat completions 流式响应（text/event-stream）的状态机。
+// 逐网络分片喂养（sse_accumulator_feed），把 `data:` 事件里的 delta 增量拼成完整回复；
+// 结果与 parse_response 对齐（content / reasoning / finish_reason / usage）。
+//
+// 生命周期：所有 builder 都在 context.temp_allocator 上，属本轮 scratch。
+SseAccumulator :: struct {
+	line:      strings.Builder, // 尚未收到换行的当前行（分片可能落在行中间）
+	event:     strings.Builder, // 当前事件的 data 负载（多行以 \n 连接）
+	content:   strings.Builder,
+	reasoning: strings.Builder,
+	finish:    string,
+	usage:     string,
+	saw_chunk: bool, // 是否解出过至少一个合法 chunk（区分"空流"与"非 SSE 响应"）
+	done:      bool, // 收到 `data: [DONE]`
+}
+
+sse_accumulator_init :: proc(a: ^SseAccumulator) {
+	a.line = strings.builder_make(context.temp_allocator)
+	a.event = strings.builder_make(context.temp_allocator)
+	a.content = strings.builder_make(context.temp_allocator)
+	a.reasoning = strings.builder_make(context.temp_allocator)
+}
+
+// 喂入一段网络分片：按 `\n` 切行，行边界与分片边界无关（跨分片的半行留在 line 里）。
+sse_accumulator_feed :: proc(a: ^SseAccumulator, chunk: string) {
+	rest := chunk
+	for {
+		nl := strings.index_byte(rest, '\n')
+		if nl < 0 {
+			strings.write_string(&a.line, rest)
+			return
+		}
+		strings.write_string(&a.line, rest[:nl])
+		sse_handle_line(a, strings.to_string(a.line))
+		strings.builder_reset(&a.line)
+		rest = rest[nl + 1:]
+	}
+}
+
+sse_handle_line :: proc(a: ^SseAccumulator, raw: string) {
+	line := strings.trim_right(raw, "\r")
+	if line == "" {
+		sse_dispatch(a) // 空行 = 事件边界
+		return
+	}
+	if strings.has_prefix(line, ":") {
+		return // SSE 注释 / 心跳
+	}
+	if strings.has_prefix(line, "data:") {
+		payload := line[len("data:"):]
+		if strings.has_prefix(payload, " ") {
+			payload = payload[1:]
+		}
+		if len(a.event.buf) > 0 {
+			strings.write_byte(&a.event, '\n')
+		}
+		strings.write_string(&a.event, payload)
+	}
+	// event: / id: / retry: 等字段对 chat completions 无意义，忽略。
+}
+
+sse_dispatch :: proc(a: ^SseAccumulator) {
+	if len(a.event.buf) == 0 {
+		return
+	}
+	// payload 别名 a.event 的底层缓冲：先消费再 reset，避免后续 append 覆盖它。
+	payload := strings.to_string(a.event)
+	if payload == "[DONE]" {
+		a.done = true
+		strings.builder_reset(&a.event)
+		return
+	}
+	sse_apply_chunk(a, payload)
+	strings.builder_reset(&a.event)
+}
+
+// 解析单个 SSE chunk：choices[0].delta.{content, reasoning_content|reasoning} 与 finish_reason，
+// 以及顶层 usage。结构缺失或 JSON 非法都静默跳过（坏帧不该打断整条流）。
+sse_apply_chunk :: proc(a: ^SseAccumulator, payload: string) {
+	v, err := json.parse_string(payload, .JSON, allocator = context.temp_allocator)
+	if err != nil {
+		return
+	}
+	root, is_obj := v.(json.Object)
+	if !is_obj {
+		return
+	}
+	if usage, uok := root["usage"].(json.Object); uok {
+		a.usage = format_usage(usage)
+	}
+	choices, has_choices := root["choices"].(json.Array)
+	if !has_choices || len(choices) == 0 {
+		// 末尾 usage 帧常带空 choices：流依然有效，只是没有内容 delta。
+		a.saw_chunk = true
+		return
+	}
+	choice, is_choice := choices[0].(json.Object)
+	if !is_choice {
+		return
+	}
+	// delta 优先；个别端点在某些帧里缺 delta，退回 message 兜底。
+	delta, has_delta := choice["delta"].(json.Object)
+	if !has_delta {
+		delta, has_delta = choice["message"].(json.Object)
+	}
+	if has_delta {
+		strings.write_string(&a.content, json_string(delta, "content"))
+		reason := json_string(delta, "reasoning_content")
+		if reason == "" {
+			reason = json_string(delta, "reasoning")
+		}
+		strings.write_string(&a.reasoning, reason)
+	}
+	if fr := json_string(choice, "finish_reason"); fr != "" {
+		a.finish = fr
+	}
+	a.saw_chunk = true
+}
+
+// 流结束后取解析结果。saw_chunk/done 皆无 → ok=false，调用方据此判断"这不是 SSE 流"。
+sse_accumulator_result :: proc(a: ^SseAccumulator) -> ChatResponse {
+	res: ChatResponse
+	if !a.saw_chunk && !a.done {
+		res.error = "响应不是 SSE 流"
+		return res
+	}
+	res.ok = true
+	res.content = strings.to_string(a.content)
+	res.reasoning = strings.to_string(a.reasoning)
+	res.finish_reason = a.finish
+	res.usage = a.usage
 	return res
 }
 

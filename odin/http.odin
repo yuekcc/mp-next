@@ -1,16 +1,18 @@
 package main
 
+import "base:runtime"
 import "core:c"
 import "core:strings"
 import curl "vendor:curl"
 
 // ---- 分节 ----
-// libcurl 封装（非流式 POST）。写回调把响应体追加到 temp 上的 Builder。
+// libcurl 封装。写回调把响应体追加到 temp 上的 Builder；流式模式额外把每个网络分片
+// 增量转交 on_chunk（SSE 逐事件解析在回调里做）。
 // 生命周期：http_init / http_deinit 管 curl 全局；每次请求自建 easy handle。
 
 // ---- 类型 ----
 
-// 一次非流式 HTTP POST 的结果。
+// 一次 HTTP POST 的结果（非流式与流式共用）。
 HttpResponse :: struct {
 	status: int, // HTTP 状态码；传输失败时为 0
 	body:   string, // 响应体原文
@@ -29,16 +31,50 @@ http_deinit :: proc() {
 
 // ---- 请求 ----
 
-// 回调在 libcurl 的 C 栈上执行；这里只用 temp 分配器（同一线程内），不跨线程。
-http_write_cb :: proc(buffer: [^]u8, size: u64, nitems: u64, outstream: rawptr) -> u64 {
+// 流式模式下每个网络分片的回调（chunk 的生命周期只到回调返回）。
+HttpChunkFn :: proc(chunk: string, user: rawptr)
+
+// 写回调的上下文：sink 累积完整原文；on_chunk 非空时把分片增量转交出去。
+http_stream_ctx :: struct {
+	sink:           ^strings.Builder,
+	on_chunk:       HttpChunkFn,
+	user:           rawptr,
+	caller_context: runtime.Context, // 回调里要还原：C 调用不会传 Odin 的隐式 context
+}
+
+// 回调在 libcurl 的 C 栈上执行，必须是 "c" 调用约定：C 不会传 Odin 的隐式 context 参数，
+// 若用默认约定，context 会被当成写缓冲指针（第一个整型参数）读出垃圾 → 一碰分配器就崩。
+// 所以这里先还原发起请求时捕获的 caller_context，再调用任何会用 context 的 Odin 过程。
+http_write_cb :: proc "c" (buffer: [^]u8, size: u64, nitems: u64, outstream: rawptr) -> u64 {
+	ctx := (^http_stream_ctx)(outstream)
+	context = ctx.caller_context
+
 	total := size * nitems
-	strings.write_bytes((^strings.Builder)(outstream), buffer[:total])
+	chunk := buffer[:total]
+	strings.write_bytes(ctx.sink, chunk)
+	if ctx.on_chunk != nil {
+		ctx.on_chunk(string(chunk), ctx.user)
+	}
 	return total
 }
 
+// 非流式 POST：等价于不挂 on_chunk 的流式 POST（响应原文一次收齐）。
 http_post_json :: proc(url: string, headers: []string, body: string) -> HttpResponse {
+	return http_post_json_stream(url, headers, body, nil, nil)
+}
+
+// POST 并把响应分片增量交给 on_chunk；返回体仍带完整原文，供非 2xx 错误摘要与
+// "端点无视 stream:true、仍回整包 JSON" 的兜底。
+http_post_json_stream :: proc(url: string, headers: []string, body: string,
+                             on_chunk: HttpChunkFn, user: rawptr) -> HttpResponse {
 	res: HttpResponse
 	sink := strings.builder_make(context.temp_allocator)
+	ctx := http_stream_ctx{
+		sink = &sink,
+		on_chunk = on_chunk,
+		user = user,
+		caller_context = context,
+	}
 
 	handle := curl.easy_init()
 	if handle == nil {
@@ -63,7 +99,7 @@ http_post_json :: proc(url: string, headers: []string, body: string) -> HttpResp
 	curl.easy_setopt(handle, .HTTPHEADER, list)
 	curl.easy_setopt(handle, .COPYPOSTFIELDS, body_z)
 	curl.easy_setopt(handle, .WRITEFUNCTION, http_write_cb)
-	curl.easy_setopt(handle, .WRITEDATA, &sink)
+	curl.easy_setopt(handle, .WRITEDATA, &ctx)
 
 	code := curl.easy_perform(handle)
 	if code != .E_OK {

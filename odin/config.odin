@@ -21,7 +21,7 @@ CONFIG_DEFAULT_DIR :: ".llmcli"
 config_known_keys := [?]string{
 	"api_key", "api_url", "model", "traj_dir", "workdir",
 	"system_prompt", "system_prompt_file", "max_iterations", "context_scope", "max_bytes",
-	"inactivity_timeout", "max_output_size", "max_exec_time", "var", "debug", "no_color",
+	"inactivity_timeout", "max_output_size", "max_exec_time", "var", "debug", "no_color", "stream",
 }
 
 // ---- 类型 ----
@@ -67,6 +67,8 @@ ConfigSettings :: struct {
 	debug:                bool,
 	h_no_color:           bool,
 	no_color:             bool,
+	h_stream:             bool,
+	stream:               bool,
 }
 
 // load 的结果：error 非空 = 硬错误（无法读取 / 语法错 / 顶层非对象 / 类型不符 / 来源互斥）。
@@ -153,6 +155,7 @@ config_parse :: proc(body, path: string) -> ConfigLoadResult {
 
 	if !config_take_bool(root, "debug", path, &s.h_debug, &s.debug, &res.error) { return res }
 	if !config_take_bool(root, "no_color", path, &s.h_no_color, &s.no_color, &res.error) { return res }
+	if !config_take_bool(root, "stream", path, &s.h_stream, &s.stream, &res.error) { return res }
 
 	if !config_take_vars(root, path, s, &res.error) { return res }
 

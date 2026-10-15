@@ -1,5 +1,5 @@
 <!-- FOR AI AGENTS - Human readability is a side effect, not a goal -->
-<!-- Managed by agent: keep sections and order; edit content, not structure. Last updated: 2026-10-13 -->
+<!-- Managed by agent: keep sections and order; edit content, not structure. Last updated: 2026-10-15 -->
 
 # AGENTS.md — odin/
 
@@ -22,10 +22,10 @@
 | `agent.odin` | RLM 主循环：`extract_code`（bash + heredoc）、空响应重试、stall guard、子代理 fork/merge | `src/agent.c3` |
 | `context.odin` | `Trajectory -> Message[]`：`RenderPolicy`、角色映射、head/tail/pin、分层截断、max_bytes、run 作用域 | `src/context.c3` |
 | `trajectory.odin` | 步骤日志（唯一真相源）：append、读回、fork/merge、blob spill、旧格式映射、list/search/tail | `src/trajectory.c3` |
-| `llm.odin` | OpenAI 兼容调用入口（system + messages → POST → 解析） | `src/llm.c3` |
-| `chat.odin` | `Message`、请求体组装、响应解析、request/archive 序列化 | `src/chat.c3` |
+| `llm.odin` | OpenAI 兼容调用入口（system + messages → POST → 解析）；`--stream` 走 SSE 增量 | `src/llm.c3` |
+| `chat.odin` | `Message`、请求体组装、响应解析、SSE 增量累加器（`SseAccumulator`）、request/archive 序列化 | `src/chat.c3` |
 | `runtime.odin` | `Executor`：bash 包装、`FINAL`/`FINAL_FILE` 捕获、三看门狗、合并/截断、中断处理 | `src/runtime.c3` |
-| `http.odin` | `vendor:curl` 非流式 POST（`http_post_json`） | `src/http.c3` |
+| `http.odin` | `vendor:curl` POST（`http_post_json` / 流式 `http_post_json_stream`） | `src/http.c3` |
 | `skill.odin` | 技能发现（`~/.agents/skills`、`<cwd>/.agents/skills`）与注入 | `src/skill.c3` |
 | `log.odin` | stderr 四级日志、密钥脱敏、`is_stdin_terminal` | `src/log.c3` |
 | `winjob.odin` | Windows Job Object（自声明 kernel32 外部函数） | `src/winjob.c3` |
@@ -76,6 +76,8 @@
 - **命令名必须是第一个参数**：`llmcli traj ...`；命令名是保留字，同名任务用 `-p`。
 - **trajectory 是唯一真相源**：每轮 `context_render` 从轨迹重渲染，内存不累加权威副本。
 - **`reasoning_content` 只入存档、绝不回传端点**：`chat.build_request` 不写它；`context_render` 不读它。
+- **`--stream`（Odin 独有）**：请求体带 `stream:true`，SSE 增量拼出的完整回复必须与非流式逐字节一致
+  （两者共用同一个 `extract_code` 入参）；C3 版无此开关，回归按 `--help` 里有没有 `--stream` 探测后跳过。
 - **RLM 不用 tools 协议**：请求体不含 `tools`。
 - **生成代码统一经子进程 bash 执行**：stdin 关掉；输出合并 stdout+stderr、剥离 xtrace、超 2000 行
   截断为末 2000 行并把完整输出落盘。
@@ -91,6 +93,9 @@
 - **路径分隔符不能混用**：Windows `os.make_directory_all` 对 `C:\a/b` 会报 `Permission_Denied`，
   内部路径一律 `slashify` 成 `/` 再拼。
 - **`put_text` 等写 map 的辅助函数要收 `^json.Object`**（值传参 + 计算键无法赋值）。
+- **libcurl 写回调必须是 `"c"` 调用约定**：C 不会传 Odin 的隐式 `context` 参数，用默认约定会把写缓冲
+  指针当成 context 读出垃圾，回调里一分配就崩。`http.odin` 在回调开头 `context = ctx.caller_context`
+  还原发起请求时捕获的 context，再转交 `sse_on_chunk`（SSE 解析里 `json.parse_string` 要用 context）。
 - **UUID/随机**：见上，需显式 CSPRNG。
 
 ## PR/commit checklist
